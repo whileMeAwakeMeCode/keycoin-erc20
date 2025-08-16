@@ -46,13 +46,14 @@ contract Keycoin is
    * @dev Mint 36M KEYCOINS to the Crowdsale contract and officially open the crowdsale
    */
   function mintCrowdsaleSupplyAndOpen(address crowdsaleContract) public onlyRole(MINTER_ROLE) {
+    require(currentSupply[3] == 0, "CROWDSALE ALREADY OPENED");
     mint(crowdsaleContract, 36000000*10**18, 3);
     bool opened = IKeycoinCrowdsale(crowdsaleContract).openCrowdsale();
     require(opened, "CROWDSALE OPENING FAILED");
   }
 
-  function burn(address from, uint amount) public onlyRole(MINTER_ROLE) {
-    _burn(from, amount);
+  function burn(uint amount) external {
+    _burn(_msgSender(), amount);
   }
 
   function addSupplyGroup(uint groupIndex, bytes32 groupCode) external onlyRole(DEFAULT_ADMIN_ROLE) {

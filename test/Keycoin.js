@@ -20,8 +20,9 @@ const phaseRate = ['22222222222222000000', '18181818181818000000', '153846153846
 describe('Keycoin', function () {
     let keycoin;
     let vestingWallet;
-    let crowdsaleContract;
+    let crowdsale;
     let usdc;
+    let usdcDecimals;
     let signers = {};
 
     const DEFAULT_ADMIN_ROLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -32,10 +33,9 @@ describe('Keycoin', function () {
     let from = (sig, contract) => ((contract || keycoin).connect(sig));
 
     async function approveAndPurchase(signer, value) {
-        await from(signer, usdc).approve(crowdsaleContract.target, value);
-        await from(signer, crowdsaleContract).purchaseFromUsdc(value);
-        //console.log(formatEther(value), '$ approved, keycoin have been purchased !');
-        console.log(formatUnits(value, 6), '$ approved, keycoin have been purchased !');
+        await from(signer, usdc).approve(crowdsale.target, value);
+        await from(signer, crowdsale).purchaseFromUsdc(value);
+        //console.log(formatUnits(value, usdcDecimals), '$ approved, some keycoins have been purchased !');
     }
     
     beforeEach(async function () {
@@ -65,10 +65,10 @@ describe('Keycoin', function () {
         const USDCMockFactory = await ethers.getContractFactory('USDCMock');
         usdc = await USDCMockFactory.deploy();
         await usdc.waitForDeployment();
-
+        usdcDecimals = parseInt(await usdc.decimals());
         const KeycoinCrowdsaleFactory = await ethers.getContractFactory('KeycoinCrowdsale');
-        crowdsaleContract = await KeycoinCrowdsaleFactory.deploy(signers.owner.address, keycoin.target, usdc.target);
-        await crowdsaleContract.waitForDeployment();
+        crowdsale = await KeycoinCrowdsaleFactory.deploy(signers.owner.address, keycoin.target, usdc.target);
+        await crowdsale.waitForDeployment();
 
     })
 
@@ -248,51 +248,59 @@ describe('Keycoin', function () {
     it('should be able to distribute KEYCOIN tokens from owner withdrawable USDC', async() => {
         const client1 = signers.user1;
         // give USDC to clients
-        await usdc.mint(client1.address, parseUnits('1000', 6));
+        await usdc.mint(client1.address, parseUnits('1000', usdcDecimals));
         // open KEYCOIN crowdsale
-        await expect(
-            from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsaleContract.target)
-        ).to.be.fulfilled;
-        const bal = (await keycoin.balanceOf(crowdsaleContract.target)).toString();
+        // only minter
+        await expect(from(signers.owner).mintCrowdsaleSupplyAndOpen(crowdsale.target)).to.be.revertedWithCustomError(keycoin, 'AccessControlUnauthorizedAccount');
+        expect(await crowdsale.crowdsaleIsOpened()).to.be.false;
+
+        // ok
+        await expect(from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)).not.to.be.rejected;
+        expect(await crowdsale.crowdsaleIsOpened()).to.be.true;
+
+        // crowdsale already opened
+        await expect(from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)).to.be.rejectedWith('CROWDSALE ALREADY OPENED');
+    
+        const bal = (await keycoin.balanceOf(crowdsale.target)).toString();
         await expect(bal).to.eq(await parseEther('36000000').toString());
         // client1 buys KEYCOIN in phase 1
         await expect(
-            from(client1, crowdsaleContract).quoteFromUsdc(parseUnits('10', 6))
+            from(client1, crowdsale).quoteFromUsdc(parseUnits('10', usdcDecimals))
         ).to.be.fulfilled;
-        await expect(await usdc.balanceOf(client1.address)).to.eq(parseUnits('1000', 6));
-        const quote1 = await crowdsaleContract.quoteFromUsdc(parseUnits('100', 6));
+        await expect(await usdc.balanceOf(client1.address)).to.eq(parseUnits('1000', usdcDecimals));
+        const quote1 = await crowdsale.quoteFromUsdc(parseUnits('100', usdcDecimals));
         await expect(quote1[0]).to.eq('2222222222222200000000');
 
         /// user1 spends 100 usdc to get KEYCOIN
         // authorize crowdsale contract to spend 100USDC
         await expect(
-            from(client1, usdc).approve(crowdsaleContract.target, parseUnits('100', 6))
+            from(client1, usdc).approve(crowdsale.target, parseUnits('100', usdcDecimals))
         ).to.be.fulfilled;
 
-        expect(await usdc.allowance(client1.address, crowdsaleContract.target)).to.eq(parseUnits('100', 6));
+        expect(await usdc.allowance(client1.address, crowdsale.target)).to.eq(parseUnits('100', usdcDecimals));
  
         await expect(
-            from(client1, crowdsaleContract).purchaseFromUsdc(parseUnits('100', 6))
+            from(client1, crowdsale).purchaseFromUsdc(parseUnits('100', usdcDecimals))
         ).to.be.fulfilled;
 
         expect(await keycoin.balanceOf(client1.address)).to.eq(quote1[0]);
-        expect((await crowdsaleContract.currentPricePolicy())[1]).to.eq(phaseRate[0]);
-        expect((await crowdsaleContract.currentPricePolicy())[2]).to.eq(quote1[0]);
-        expect(await crowdsaleContract.totalSold()).to.eq(quote1[0]);
-        expect(await usdc.balanceOf(crowdsaleContract.target)).to.eq(parseUnits('100', 6));
+        expect((await crowdsale.currentPricePolicy())[1]).to.eq(phaseRate[0]);
+        expect((await crowdsale.currentPricePolicy())[2]).to.eq(quote1[0]);
+        expect(await crowdsale.totalSold()).to.eq(quote1[0]);
+        expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('100', usdcDecimals));
 
-        await expect(from(signers.user1, crowdsaleContract).withdraw(parseUnits('65', 6), signers.owner.address)).to.be.revertedWithCustomError(crowdsaleContract, 'OwnableUnauthorizedAccount');
-        await expect(from(signers.owner, crowdsaleContract).withdraw(parseUnits('65', 6), signers.owner.address)).to.be.fulfilled;
+        await expect(from(signers.user1, crowdsale).withdraw(parseUnits('65', usdcDecimals), signers.owner.address)).to.be.revertedWithCustomError(crowdsale, 'OwnableUnauthorizedAccount');
+        await expect(from(signers.owner, crowdsale).withdraw(parseUnits('65', usdcDecimals), signers.owner.address)).to.be.fulfilled;
         
-        expect(await usdc.balanceOf(signers.owner.address)).to.eq(parseUnits('65', 6));
-        expect(await usdc.balanceOf(crowdsaleContract.target)).to.eq(parseUnits('35', 6));
+        expect(await usdc.balanceOf(signers.owner.address)).to.eq(parseUnits('65', usdcDecimals));
+        expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('35', usdcDecimals));
     })
 
     it('should respect the crowdsale schedule by sold supply', async() => {
         const client1 = signers.user1;
         const client2 = signers.user2;
 
-        const tenM = parseUnits("2319000", 6); // max 2320000 $
+        const tenM = parseUnits("2319000", usdcDecimals); // max 2320000 $
         
         // give USDC to clients
         await usdc.mint(client1.address, tenM);
@@ -300,7 +308,7 @@ describe('Keycoin', function () {
         // await usdc.mint(client4.address, tenM);
 
         // transfer supply & open crowdsale
-        await from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsaleContract.target)
+        await from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)
 
         await expect(approveAndPurchase(client1, tenM)).not.to.be.rejected;
         
@@ -317,8 +325,8 @@ describe('Keycoin', function () {
         const client3 = signers.user3;
         const client4 = signers.user3;
 
-        const bal = parseUnits("1000000", 6);
-        const val = parseUnits("100000", 6); // max supply purchase 2320000 $
+        const bal = parseUnits("1000000", usdcDecimals);
+        const val = parseUnits("100000", usdcDecimals); // max supply purchase 2320000 $
         
         // give USDC to clients
         await usdc.mint(client1.address, bal);
@@ -327,16 +335,16 @@ describe('Keycoin', function () {
         await usdc.mint(client4.address, bal);
 
         // transfer supply & open crowdsale
-        await from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsaleContract.target)
+        await from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)
 
         await expect(approveAndPurchase(client1, val)).not.to.be.rejected;
         const c1Bal = await keycoin.balanceOf(client1.address);
-        const pp = await crowdsaleContract.currentPricePolicy();
+        const pp = await crowdsale.currentPricePolicy();
 
         // goto phase 2
         await time.increaseTo(parseInt(pp[3])+10);
         await expect(approveAndPurchase(client2, val)).not.to.be.rejected;
-        const pp2 = await crowdsaleContract.currentPricePolicy();
+        const pp2 = await crowdsale.currentPricePolicy();
 
         expect(pp2[1]).to.eq(phaseRate[1]);
 
@@ -347,13 +355,13 @@ describe('Keycoin', function () {
         // goto phase 3
         await time.increaseTo(parseInt(pp2[3])+10);
         await expect(approveAndPurchase(client3, val)).not.to.be.rejected;
-        const pp3 = await crowdsaleContract.currentPricePolicy();
+        const pp3 = await crowdsale.currentPricePolicy();
         expect(pp3[1]).to.eq(phaseRate[2]);
 
         // goto phase 4
         await time.increaseTo(parseInt(pp3[3])+10);
         await expect(approveAndPurchase(client4, val)).not.to.be.rejected;
-        const pp4 = await crowdsaleContract.currentPricePolicy();
+        const pp4 = await crowdsale.currentPricePolicy();
         expect(pp4[1]).to.eq(phaseRate[3]);
 
         // goto crowdsale end
@@ -362,6 +370,42 @@ describe('Keycoin', function () {
         await expect(approveAndPurchase(client1, val)).to.be.rejectedWith('SOLD OUT');
 
         const tSold = (await Promise.all(phaseRate.map(r => (100000 * parseFloat(formatEther(r)))))).reduce((a, b) => (a + b))
-        expect(await crowdsaleContract.totalSold()).to.eq(parseEther(tSold.toString()));
+        expect(await crowdsale.totalSold()).to.eq(parseEther(tSold.toString()));
+    })
+
+    it('should execute "closeCrowdsale_sendToDao_burnUnsold" as expected', async() => {
+        const client1 = signers.user1;
+        const client2 = signers.user2;
+        const daoWallet = signers.user3;
+
+        const val = parseUnits("1150000", usdcDecimals); // max supply purchase 2320000 $
+        
+        // give USDC to clients
+        await usdc.mint(client1.address, val);
+        await usdc.mint(client2.address, val);
+      
+
+        await expect(from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)).not.to.be.rejected;
+
+        await expect(approveAndPurchase(client1, val)).not.to.be.rejected;
+
+        // crowdsale still opened
+        await expect(from(signers.owner, crowdsale).closeCrowdsale_sendToDao_burnUnsold(daoWallet.address)).to.be.rejectedWith('CROWDSALE ONGOING');
+
+        await expect(approveAndPurchase(client2, val)).not.to.be.rejected;
+
+        const cBal = await keycoin.balanceOf(crowdsale.target);
+        const pp = await crowdsale.currentPricePolicy();
+        await time.increaseTo(parseInt(pp[3])+10);
+
+        await expect(from(signers.owner, crowdsale).closeCrowdsale_sendToDao_burnUnsold(daoWallet.address)).to.be.fulfilled;
+
+        expect(await crowdsale.crowdsaleIsOpened()).to.be.false;
+
+        expect(await keycoin.balanceOf(crowdsale.target)).to.eq('0');
+        const daoSupBal = await parseEther((parseInt(await formatEther(cBal)) / 2).toString());;
+        expect(await keycoin.balanceOf(daoWallet.address)).to.eq(daoSupBal);
+        
+    
     })
 }) 

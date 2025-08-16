@@ -6,9 +6,14 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import "hardhat/console.sol";
+// import "hardhat/console.sol";
+
 interface IERC20Decimals is IERC20 {
     function decimals() external view returns (uint8);
+}
+
+interface IERC20Burn is IERC20 {
+    function burn(uint amount) external;
 }
 
 
@@ -79,6 +84,7 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
 
     function openCrowdsale() external returns(bool opened) {
         require(_msgSender() == keycoinToken, "KEYCOIN ONLY");
+        require(!crowdsaleIsOpened, "CROWDSALE ALREADY OPENED");
         uint _now = block.timestamp;
         uint oneMonth = (365 days) / 12;
 
@@ -189,6 +195,7 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         address sender = _msgSender();
 
         (uint tAmountOut, uint quoteRest) = _quoteFromUsdc(approvedUsdcAmount);
+      
         uint pIndex = _currentPhaseIndex();
 
         require(pIndex < 17, "SOLD OUT");
@@ -259,6 +266,29 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
     function withdraw(uint usdcAmount, address to) external onlyOwner {
         require(to != address(0), 'NO USDC BURN');
         SafeERC20.safeTransfer(IERC20(usdcContract), to, usdcAmount);
+    }
+
+    function closeCrowdsale_sendToDao_burnUnsold(address daoWallet) external onlyOwner crowdsaleOpened {
+        require(daoWallet != address(0), "INVALID DAO WALLET");
+        uint totalSaleSupply = 36000000 * 10**18;
+        require(
+            (totalSold() == totalSaleSupply)
+            || (block.timestamp > schedule[15]), 
+            "CROWDSALE ONGOING"
+        );
+
+        crowdsaleIsOpened = false;
+        uint unsold = totalSaleSupply - totalSold();
+
+        if(unsold > 0) {
+
+            uint halfToBurn = ((unsold*10**18) / 2) / 10**18;
+            uint daoSupply = unsold - halfToBurn;
+
+            SafeERC20.safeTransfer(IERC20(keycoinToken), daoWallet, daoSupply);
+            IERC20Burn(keycoinToken).burn(halfToBurn);
+        }
+
     }
 
 }
