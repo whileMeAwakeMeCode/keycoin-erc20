@@ -17,12 +17,4 @@ contract Storage {
 
     address public vestingWallet;
     
-    /**
-     * holder account => token type => vesting balance (vBalances)
-     */
-    //mapping(address => mapping(uint => uint)) vBalances;
-
-    
-    
-
 }

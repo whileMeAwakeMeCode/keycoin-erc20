@@ -7,6 +7,9 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "hardhat/console.sol";
+interface IERC20Decimals is IERC20 {
+    function decimals() external view returns (uint8);
+}
 
 
 /**
@@ -41,6 +44,7 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
     bool public crowdsaleIsOpened;
     address public keycoinToken;
     address public usdcContract;
+    uint public usdcDecimals;
     uint256[] public schedule;
 
     constructor(address __owner, address __keycoinToken, address __usdcContract) 
@@ -50,6 +54,8 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         require(__usdcContract != address(0), "invalid collateral address");
         keycoinToken = __keycoinToken;
         usdcContract = __usdcContract;
+        usdcDecimals = IERC20Decimals(__usdcContract).decimals();
+
         // maxSupply, tokensByUsdc, soldSupply, endDate
         schedule = [
             6000000*10**18, 22222222222222000000, 0, 0,  
@@ -67,6 +73,7 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
 
     function setUsdcContract(address _usdcContract) public onlyOwner {
         require(_usdcContract != address(0), "invalid collateral address");
+        usdcDecimals = IERC20Decimals(_usdcContract).decimals();
         usdcContract = _usdcContract;
     }
 
@@ -96,7 +103,7 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         
         for (i = 0; i < 16; i+=4) {
             if (block.timestamp < schedule[i+3]) {       
-                if (schedule[i+2] < (schedule[i] /* * 10**18 */)) {
+                if (schedule[i+2] < schedule[i]) {
                     return i;
                 }
             }
@@ -107,29 +114,11 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
 
 
     function _currentPricePolicy() internal view returns (uint maxSupply, uint tokensByUsdc, uint soldSupply, uint endDate) {
-        
-        // uint supply;
-        // uint price;
-        // uint sold;
-        // uint date;
         uint i = _currentPhaseIndex();
 
         require(i < 17, "SOLD OUT");
 
         return(schedule[i], schedule[i+1], schedule[i+2], schedule[i+3]);    
-
-        // for (i = 0; i < 16; i+=4) {
-        //     if (block.timestamp < schedule[i+3]) {       
-        //         if ((price == 0) && (schedule[i+2] < (schedule[i] * 10**18))) {
-        //             supply = schedule[i];
-        //             price = schedule[i+1]; 
-        //             sold = schedule[i+2];     
-        //             date = schedule[i+3];    
-        //         }
-        //     }
-        // }
-
-        // return (supply, price, sold, date);
     
     }
 
@@ -142,80 +131,42 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         return _currentPricePolicy();
     }
 
-    /** [low-level]
+    /** [low-level] [usdc decimals dependent]
     * @notice Internally computes the KEYCOIN tokens amount and USDC entrance fee amount to be received when receiving of USDC 
     * @param usdcAmount the amount of usdc received by this contract
     * @return tAmountOut KEYCOIN tokens amount to be received
     */
-    // function _quoteFromUsdc(uint usdcAmount) internal view returns(uint tAmountOut) {
-    //     (,uint tokensByUsdc,,) = _currentPricePolicy();
-        
-    //     tAmountOut = (
-    //         (usdcAmount * tokensByUsdc) / 10**18
-    //     );
-    // }
     function _quoteFromUsdc(uint usdcAmount) internal view returns(uint tAmountOut, uint rest) {
-
         rest = usdcAmount;
-        //console.log('------[ QUOTE for $', usdcAmount/10**18, ' ]--------');
+        uint scaleFactor = 10 ** usdcDecimals; // KEYCOIN(18) vs USDC(6)
 
         for (uint i = 0; (rest > 0) && (i < 16); i+=4) {
-
-            //console.log("rest onstartloop #",i/4,": ", rest/10**18);
-
             if (block.timestamp < schedule[i+3]) {    
                 uint maxSupply = schedule[i];
                 uint currentSupply = schedule[i+2];
-                uint tokensByUsdc = schedule[i+1];  // changeRate   
+                uint tokensByUsdc = schedule[i+1];   
 
-                if (currentSupply < maxSupply /* * 10**18 */) {
-
+                if (currentSupply < maxSupply) {
                     // max phase distribuable supply
                     uint phaseAvailSupply = maxSupply - currentSupply;
-                    uint phaseAmountOut = (rest * tokensByUsdc) / 10**18;
 
-                    // console.log('phaseAmountOut', phaseAmountOut/10**18);
-                    // console.log('phaseAvailSupply', phaseAvailSupply/10**18);
+                    // compute how many KEYCOIN tokens user gets for "rest" USDC
+                    uint phaseAmountOut = (rest * tokensByUsdc) / scaleFactor;
 
                     if (phaseAmountOut <= phaseAvailSupply) {
-                        //console.log('ENOUGH PHASE SUPPLY');
-                        // enough supply avail in that phase
+                        // sufficient supply 
                         rest = 0;
                         tAmountOut += phaseAmountOut;
-                        //break;
                     } 
                     else {
-                        //console.log('SUPPLY OVERFLOW');
-                        // phase avail supply overflow: jump to next phase
-                        uint spentUsdc = ((phaseAvailSupply) / (tokensByUsdc)) * 10**18;  // phaseAvailSupply / tokensByUsdc;
-                        //console.log('spentUsdc', spentUsdc/10**18);
+                        // phase supply overflow: jump to next phase
+                        uint spentUsdc = (phaseAvailSupply * scaleFactor) / tokensByUsdc;
                         rest -= spentUsdc;
                         tAmountOut += phaseAvailSupply;
-
                     }
-
-                    //console.log('tAmountOut', tAmountOut/10**18);
-                    //console.log('------------------');
                 }
-
-            }  
-            //console.log("rest onendloop #",i/4,": ", rest/10**18);
-            if (((i/4) == 3) && rest > 0) {
-                //console.log('tAmountOut :', tAmountOut);
-                // reimbursement
-                
-            }
-            //console.log('------------------');
-
- 
-            
-        }   // 2000000.000000000000000000 - 270000.000000000000000000;
-        
-        
-            // 35987500000000000000000000
-            //    12500000000000000000000
-        
-        
+            }              
+        }   
     }
 
     /**
@@ -227,72 +178,51 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         return _quoteFromUsdc(usdcAmount);
     }
 
-
-
-    // /**
-    // * @notice Mint KEYCOIN tokens from USDC tokens
-    // * @dev Low-Level internal method: all checks and USDC transfers must be done prior to the call
-    // * @param to the address to send the KEYCOIN tokens to
-    // * @param usdcAmount the amount of USDC that has already been sent to this contract in order to receive KEYCOIN tokens
-    // */
-    // function _purchaseFromUsdc(address to, uint usdcAmount) internal {
-    //     uint tAmountOut = _quoteFromUsdc(usdcAmount);
-    //     SafeERC20.safeTransfer(IERC20(keycoinToken), to, tAmountOut);
-    // }
-
-    /** [public][non-reentrant]
+    /** [public][non-reentrant][usdc decimals dependent]
     * @notice Mint KEYCOIN tokens from USDC tokens
     * @dev Public method distributing KEYCOIN tokens to the msg.sender (non-reentrant) 
     * @param approvedUsdcAmount an amount of USDC token that's been already approved by sender on contract at `usdcContract`
     */
     function purchaseFromUsdc(uint approvedUsdcAmount) public crowdsaleOpened nonReentrant {
-        require(approvedUsdcAmount>0, 'MIN-USDC-AMOUNT');
+        require(approvedUsdcAmount > 0, "MIN-USDC-AMOUNT");
 
         address sender = _msgSender();
-        
+
         (uint tAmountOut, uint quoteRest) = _quoteFromUsdc(approvedUsdcAmount);
         uint pIndex = _currentPhaseIndex();
 
-        require(pIndex<17, "SOLD OUT");
+        require(pIndex < 17, "SOLD OUT");
 
         require(
             IERC20(usdcContract).transferFrom(sender, address(this), approvedUsdcAmount),
-            'USDC-TRF-FAILED'
+            "USDC-TRF-FAILED"
         );
 
+        // ✅ rest is in KEYCOIN (18 decimals)
         uint rest = tAmountOut;
-        for (uint i = 0; i < (4 - (pIndex/4)); i++) {
-            uint ind = pIndex+(i*4);
-            //uint maxSupply = schedule[ind];
-            //uint tokensByUsdc = schedule[ind+1];  
-            //uint currentSupply = schedule[ind+2];
-            uint phaseAvailSupply = schedule[ind] - schedule[ind+2];//maxSupply - currentSupply;
-            // changeRate  
-            // rest = tAmountOut > schedule[pIndex+2]
-            // schedule[pIndex+2] += rest;
+        for (uint i = 0; i < (4 - (pIndex / 4)); i++) {
+            uint ind = pIndex + (i * 4);
+
+            uint phaseAvailSupply = schedule[ind] - schedule[ind + 2];
+
             if (rest <= phaseAvailSupply) {
-                // enough supply avail in that phase
-                schedule[ind+2] += rest;
+                schedule[ind + 2] += rest;
                 rest = 0;
                 break;
-            } 
-            else {
-                // phase avail supply overflow: jump to next phase
-                schedule[ind+2] += phaseAvailSupply;
+            } else {
+                schedule[ind + 2] += phaseAvailSupply;
                 rest -= phaseAvailSupply;
-
             }
         }
-        
 
         SafeERC20.safeTransfer(IERC20(keycoinToken), sender, tAmountOut);
 
-        if ((quoteRest > 0) && (quoteRest <= approvedUsdcAmount)) {
-            // reimbursement
-            //console.log('REIMBURSMENT OF $', quoteRest);
+        // ✅ quoteRest is in USDC (6 decimals), safe to refund
+        if (quoteRest > 0 && quoteRest <= approvedUsdcAmount) {
             SafeERC20.safeTransfer(IERC20(usdcContract), sender, quoteRest);
         }
     }
+
 
 
     function _usdcAvailSupply() internal view returns(uint usdcASupply) {

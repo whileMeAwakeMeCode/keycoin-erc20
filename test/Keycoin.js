@@ -1,6 +1,6 @@
 const { days } = require('@nomicfoundation/hardhat-network-helpers/dist/src/helpers/time/duration');
 const { expect } = require('chai');
-const { keccak256, toUtf8Bytes, parseEther, formatEther } = require('ethers');
+const { keccak256, toUtf8Bytes, parseEther, formatEther, parseUnits, formatUnits } = require('ethers');
 const { ethers, upgrades } = require('hardhat');
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
@@ -34,7 +34,8 @@ describe('Keycoin', function () {
     async function approveAndPurchase(signer, value) {
         await from(signer, usdc).approve(crowdsaleContract.target, value);
         await from(signer, crowdsaleContract).purchaseFromUsdc(value);
-        console.log(formatEther(value), '$ approved, keycoin have been purchased !');
+        //console.log(formatEther(value), '$ approved, keycoin have been purchased !');
+        console.log(formatUnits(value, 6), '$ approved, keycoin have been purchased !');
     }
     
     beforeEach(async function () {
@@ -245,10 +246,9 @@ describe('Keycoin', function () {
     });
 
     it('should be able to distribute KEYCOIN tokens from owner withdrawable USDC', async() => {
-        //try {
         const client1 = signers.user1;
         // give USDC to clients
-        await usdc.mint(client1.address, parseEther('1000'));
+        await usdc.mint(client1.address, parseUnits('1000', 6));
         // open KEYCOIN crowdsale
         await expect(
             from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsaleContract.target)
@@ -257,44 +257,42 @@ describe('Keycoin', function () {
         await expect(bal).to.eq(await parseEther('36000000').toString());
         // client1 buys KEYCOIN in phase 1
         await expect(
-            from(client1, crowdsaleContract).quoteFromUsdc(parseEther('10'))
+            from(client1, crowdsaleContract).quoteFromUsdc(parseUnits('10', 6))
         ).to.be.fulfilled;
-        await expect(await usdc.balanceOf(client1.address)).to.eq(parseEther('1000'));
-        const quote1 = await crowdsaleContract.quoteFromUsdc(parseEther('100'));
+        await expect(await usdc.balanceOf(client1.address)).to.eq(parseUnits('1000', 6));
+        const quote1 = await crowdsaleContract.quoteFromUsdc(parseUnits('100', 6));
         await expect(quote1[0]).to.eq('2222222222222200000000');
 
         /// user1 spends 100 usdc to get KEYCOIN
         // authorize crowdsale contract to spend 100USDC
         await expect(
-            from(client1, usdc).approve(crowdsaleContract.target, parseEther('100'))
+            from(client1, usdc).approve(crowdsaleContract.target, parseUnits('100', 6))
         ).to.be.fulfilled;
 
-        expect(await usdc.allowance(client1.address, crowdsaleContract.target)).to.eq(parseEther('100'));
+        expect(await usdc.allowance(client1.address, crowdsaleContract.target)).to.eq(parseUnits('100', 6));
  
         await expect(
-            from(client1, crowdsaleContract).purchaseFromUsdc(parseEther('100'))
+            from(client1, crowdsaleContract).purchaseFromUsdc(parseUnits('100', 6))
         ).to.be.fulfilled;
 
         expect(await keycoin.balanceOf(client1.address)).to.eq(quote1[0]);
         expect((await crowdsaleContract.currentPricePolicy())[1]).to.eq(phaseRate[0]);
         expect((await crowdsaleContract.currentPricePolicy())[2]).to.eq(quote1[0]);
         expect(await crowdsaleContract.totalSold()).to.eq(quote1[0]);
-        expect(await usdc.balanceOf(crowdsaleContract.target)).to.eq(parseEther('100'));
+        expect(await usdc.balanceOf(crowdsaleContract.target)).to.eq(parseUnits('100', 6));
 
-        await expect(from(signers.user1, crowdsaleContract).withdraw(parseEther('65'), signers.owner.address)).to.be.revertedWithCustomError(crowdsaleContract, 'OwnableUnauthorizedAccount');
-        await expect(from(signers.owner, crowdsaleContract).withdraw(parseEther('65'), signers.owner.address)).to.be.fulfilled;
+        await expect(from(signers.user1, crowdsaleContract).withdraw(parseUnits('65', 6), signers.owner.address)).to.be.revertedWithCustomError(crowdsaleContract, 'OwnableUnauthorizedAccount');
+        await expect(from(signers.owner, crowdsaleContract).withdraw(parseUnits('65', 6), signers.owner.address)).to.be.fulfilled;
         
-        expect(await usdc.balanceOf(signers.owner.address)).to.eq(parseEther('65'));
-        expect(await usdc.balanceOf(crowdsaleContract.target)).to.eq(parseEther('35'));
-        //}catch(e) {console.log('"should be able to distribute KEYCOIN" ERROR:', e)}
+        expect(await usdc.balanceOf(signers.owner.address)).to.eq(parseUnits('65', 6));
+        expect(await usdc.balanceOf(crowdsaleContract.target)).to.eq(parseUnits('35', 6));
     })
 
     it('should respect the crowdsale schedule by sold supply', async() => {
-        //try {
         const client1 = signers.user1;
         const client2 = signers.user2;
 
-        const tenM = parseEther('2319000'); // max 2320000 $
+        const tenM = parseUnits("2319000", 6); // max 2320000 $
         
         // give USDC to clients
         await usdc.mint(client1.address, tenM);
@@ -306,11 +304,7 @@ describe('Keycoin', function () {
 
         await expect(approveAndPurchase(client1, tenM)).not.to.be.rejected;
         
-        // console.log('currentPricePolicy', (await crowdsaleContract.currentPricePolicy()).map((p, pi) => (pi < 3 ? formatEther(p) : p)));
-        console.log('totalSold', formatEther(await crowdsaleContract.totalSold()));
         await expect(approveAndPurchase(client2, tenM)).not.to.be.rejected;
-
-        console.log('totalSold 2', formatEther(await crowdsaleContract.totalSold()));
 
         await expect(approveAndPurchase(client2, tenM)).to.be.rejectedWith('SOLD OUT');
 
@@ -323,8 +317,8 @@ describe('Keycoin', function () {
         const client3 = signers.user3;
         const client4 = signers.user3;
 
-        const bal = parseEther('1000000'); 
-        const val = parseEther('100000'); // max supply purchase 2320000 $
+        const bal = parseUnits("1000000", 6);
+        const val = parseUnits("100000", 6); // max supply purchase 2320000 $
         
         // give USDC to clients
         await usdc.mint(client1.address, bal);
