@@ -47,7 +47,7 @@ contract Keycoin is
    */
   function mintCrowdsaleSupplyAndOpen(address crowdsaleContract) public onlyRole(MINTER_ROLE) {
     require(currentSupply[3] == 0, "CROWDSALE ALREADY OPENED");
-    mint(crowdsaleContract, 36000000*10**18, 3);
+    _supplySafeMint(crowdsaleContract, 36000000*10**18, 3);
     bool opened = IKeycoinCrowdsale(crowdsaleContract).openCrowdsale();
     require(opened, "CROWDSALE OPENING FAILED");
   }
@@ -87,7 +87,7 @@ contract Keycoin is
     _mint(vestingWallet, _amount);
   }
 
-  function mint(address to, uint256 amount, uint supplyGroup) public onlyRole(MINTER_ROLE) {
+  function _supplySafeMint(address to, uint256 amount, uint supplyGroup) internal {
     require(
       (supplyGroup > 0) && (supplyGroup <= 6),
       "UNKOWN_SUPPLY_GROUP"
@@ -111,6 +111,10 @@ contract Keycoin is
       _mintToVestingWallet(supplyGroups[supplyGroup], amount);
     }
     else _mint(to, amount);
+  }
+
+  function mint(address to, uint256 amount, uint supplyGroup) public onlyRole(MINTER_ROLE) {
+    _supplySafeMint(to, amount, supplyGroup);
   }
 
   function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {}

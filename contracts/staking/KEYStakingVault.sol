@@ -8,10 +8,9 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./KycVerifier.sol";
 
-abstract contract MonkeycoStaking is Ownable, KycVerifier, ReentrancyGuard, Pausable {
+abstract contract KEYStakingVault is Ownable, KycVerifier, ReentrancyGuard, Pausable {
 
-    address public keycoin;     // KEYCOIN
-    address public usd;         // USD based stablecoin
+    address public keycoin;     
 
     uint256 public nextPositionId = 1;
 
@@ -41,12 +40,11 @@ abstract contract MonkeycoStaking is Ownable, KycVerifier, ReentrancyGuard, Paus
         uint32 projectId
     );
 
-    constructor(address __kycSigner, address __keycoin, address __usd) KycVerifier(__kycSigner) {
+    constructor(address __kycSigner, address __keycoin) KycVerifier(__kycSigner) {
         keycoin = __keycoin;
-        usd = __usd;
     }
 
-    function stakeUSDC(
+    function stake(
         uint256 amount,
         uint16 lockMonths,
         uint32 projectId,
@@ -61,7 +59,7 @@ abstract contract MonkeycoStaking is Ownable, KycVerifier, ReentrancyGuard, Paus
         _checkKyc(sender, deadline, signature);
 
         // Pull tokens
-        require(IERC20(usd).transferFrom(sender, address(this), amount), "transferFrom-failed");
+        require(IERC20(keycoin).transferFrom(sender, address(this), amount), "transferFrom-failed");
 
         uint256 pid = ++userPositionCount[sender];
 
