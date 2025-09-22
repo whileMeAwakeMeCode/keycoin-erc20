@@ -28,7 +28,7 @@ abstract contract KEYStakingVault is Ownable, KycVerifier, ReentrancyGuard, Paus
         uint256 amount;        // staked principal
         uint48  start;         // start timestamp
         uint16  lockMonths;    // lock duration in months
-        uint32  projectId;     // linked project for E
+        uint32  projectId;     // linked project for E  /// TODO ====> /!\ PSFP NEEDED !! Set a global staking
         uint32  lastClaimed;   // last claimed epoch id
     }
 

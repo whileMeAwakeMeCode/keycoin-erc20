@@ -7,10 +7,6 @@ interface IMintableERC20 {
     function mint(address to, uint256 amount, uint supplyGroup) external;
 }
 
-interface IEmissionController {
-
-}
-
 /** [ Reward Formula Isolation ]
  * @title EmissionController
  * @author @Mat L.

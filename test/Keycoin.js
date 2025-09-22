@@ -18,12 +18,12 @@ const phaseRate = ['22222222222222000000', '18181818181818000000', '153846153846
 
 
 describe('Keycoin', function () {
-    let keycoin;
-    let vestingWallet;
-    let crowdsale;
-    let usdc;
-    let usdcDecimals;
-    let signers = {};
+    let keycoin;            // KEYCOIN ERC20 Token
+    let vestingWallet;      // VESTING WALLET
+    let crowdsale;          // COWDSALE MANAGER
+    let usdc;               // MOCK USDC (test purpose only)
+    let usdcDecimals;       // Dynamic collateral token decimals
+    let signers = {};       
 
     const DEFAULT_ADMIN_ROLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
     const PAUSER_ROLE = keccak256(toUtf8Bytes("PAUSER_ROLE"));

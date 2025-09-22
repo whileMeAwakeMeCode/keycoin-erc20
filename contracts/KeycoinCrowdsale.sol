@@ -63,10 +63,12 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
 
         // maxSupply, tokensByUsdc, soldSupply, endDate
         schedule = [
+            /// - PRIVATE PHASES - ///
             6000000*10**18, 22222222222222000000, 0, 0,  
             8000000*10**18, 18181818181818000000, 0, 0, 
-            10000000*10**18, 15384615384615000000, 0, 0,
-            12000000*10**18, 12500000000000000000, 0, 0
+            /// - PUBLIC PHASES - (KYC required) ///
+            10000000*10**18, 15384615384615000000, 0, 0,   
+            12000000*10**18, 12500000000000000000, 0, 0     
         ]; 
     }
 
@@ -199,6 +201,8 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         uint pIndex = _currentPhaseIndex();
 
         require(pIndex < 17, "SOLD OUT");
+
+        // _checkKyc
 
         require(
             IERC20(usdcContract).transferFrom(sender, address(this), approvedUsdcAmount),
