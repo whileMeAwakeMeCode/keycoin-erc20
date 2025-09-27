@@ -277,26 +277,40 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
     /** [owner-only]
      * @notice Withdraw an amount of USDC held by this contract
      */
-    function withdraw(uint usdcAmount, address to) external onlyOwner {
-        require(to != address(0), 'NO USDC BURN');
-        require(_softCapReached(), "SOFTCAP UNREACHED");
+    function withdraw(uint256 usdcAmount, address to) external onlyOwner {
+        require(to != address(0), "NO USDC BURN");
 
-        totalUsdcWithdrawn += usdcAmount;
-        SafeERC20.safeTransfer(IERC20(usdcContract), to, usdcAmount);
+        uint256 balance = IERC20(usdcContract).balanceOf(address(this));
+        uint256 totalCollected = balance + totalUsdcWithdrawn;
+
+        if (_softCapReached()) {
+            // softcap reached: limited withdrawal
+            totalUsdcWithdrawn += usdcAmount;
+            SafeERC20.safeTransfer(IERC20(usdcContract), to, usdcAmount);
+        } else {
+            // softcap unreached: max 20% of total collected
+            uint256 maxWithdrawable = (totalCollected * 20) / 100;
+            require(totalUsdcWithdrawn + usdcAmount <= maxWithdrawable, "EXCEEDS 20% LIMIT");
+
+            totalUsdcWithdrawn += usdcAmount;
+            SafeERC20.safeTransfer(IERC20(usdcContract), to, usdcAmount);
+        }
     }
 
     function refundMe() external {
-        require((block.timestamp > schedule[15]), "CROWDSALE ONGOING"); // crowdsale must be closed
-        require(!_softCapReached(), "SOFTCAP REACHED");                 // softcap must not be reached
+        require(block.timestamp > schedule[15], "CROWDSALE ONGOING"); // crowdsale must be closed
+        require(!_softCapReached(), "SOFTCAP REACHED");               // softcap must not be reached
 
         address sender = _msgSender();
-        uint rBal = usdcPurchaseNoDecimals[sender];
+        uint256 rBal = usdcPurchaseNoDecimals[sender];
         require(rBal > 0, "NO PURCHASE");
 
-        // refund
+        // Reset balance before transfer (protection against re-entrancy)
         usdcPurchaseNoDecimals[sender] = 0;
-        SafeERC20.safeTransfer(IERC20(usdcContract), sender, rBal * 10**usdcDecimals);   // 100% USDC refund
 
+        // Refund 80% of deposit
+        uint256 refundAmount = (rBal * 80) / 100;
+        SafeERC20.safeTransfer(IERC20(usdcContract), sender, refundAmount * 10**usdcDecimals);
     }
 
     function closeCrowdsale_sendToDao_burnUnsold(address daoWallet) external onlyOwner crowdsaleOpened {
