@@ -50,7 +50,10 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
     address public keycoinToken;
     address public usdcContract;
     uint public usdcDecimals;
+    uint public totalUsdcWithdrawn;
     uint256[] public schedule;
+
+    mapping(address => uint) public usdcPurchaseNoDecimals;
 
     constructor(address __owner, address __keycoinToken, address __usdcContract) 
     Ownable(__owner) 
@@ -232,6 +235,8 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         if (quoteRest > 0 && quoteRest <= approvedUsdcAmount) {
             SafeERC20.safeTransfer(IERC20(usdcContract), sender, quoteRest);
         }
+
+        usdcPurchaseNoDecimals[sender] += ((approvedUsdcAmount - quoteRest) / (10**usdcDecimals));
     }
 
 
@@ -264,16 +269,40 @@ contract KeycoinCrowdsale is Ownable, ReentrancyGuard {
         crowdsaleIsOpened = true;
     }
 
+    function _softCapReached() internal view returns(bool sReached) {
+        uint softCap = 150000 * 10**usdcDecimals;
+        sReached = (_usdcAvailSupply() + totalUsdcWithdrawn) >= softCap;
+    }
+
     /** [owner-only]
      * @notice Withdraw an amount of USDC held by this contract
      */
     function withdraw(uint usdcAmount, address to) external onlyOwner {
         require(to != address(0), 'NO USDC BURN');
+        require(_softCapReached(), "SOFTCAP UNREACHED");
+
+        totalUsdcWithdrawn += usdcAmount;
         SafeERC20.safeTransfer(IERC20(usdcContract), to, usdcAmount);
     }
 
+    function refundMe() external {
+        require((block.timestamp > schedule[15]), "CROWDSALE ONGOING"); // crowdsale must be closed
+        require(!_softCapReached(), "SOFTCAP REACHED");                 // softcap must not be reached
+
+        address sender = _msgSender();
+        uint rBal = usdcPurchaseNoDecimals[sender];
+        require(rBal > 0, "NO PURCHASE");
+
+        // refund
+        usdcPurchaseNoDecimals[sender] = 0;
+        SafeERC20.safeTransfer(IERC20(usdcContract), sender, rBal * 10**usdcDecimals);   // 100% USDC refund
+
+    }
+
     function closeCrowdsale_sendToDao_burnUnsold(address daoWallet) external onlyOwner crowdsaleOpened {
+        require(_softCapReached(), "SOFTCAP UNREACHED");
         require(daoWallet != address(0), "INVALID DAO WALLET");
+
         uint totalSaleSupply = 36000000 * 10**18;
         require(
             (totalSold() == totalSaleSupply)

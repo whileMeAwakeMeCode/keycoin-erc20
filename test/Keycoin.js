@@ -247,6 +247,7 @@ describe('Keycoin', function () {
 
     it('should be able to distribute KEYCOIN tokens from owner withdrawable USDC', async() => {
         const client1 = signers.user1;
+        const client2 = signers.user2;
         // give USDC to clients
         await usdc.mint(client1.address, parseUnits('1000', usdcDecimals));
         // open KEYCOIN crowdsale
@@ -290,10 +291,23 @@ describe('Keycoin', function () {
         expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('100', usdcDecimals));
 
         await expect(from(signers.user1, crowdsale).withdraw(parseUnits('65', usdcDecimals), signers.owner.address)).to.be.revertedWithCustomError(crowdsale, 'OwnableUnauthorizedAccount');
+        await expect(from(signers.owner, crowdsale).withdraw(parseUnits('65', usdcDecimals), signers.owner.address)).to.be.revertedWith('SOFTCAP UNREACHED');
+        
+        // sell KEYCOIN to reach soft cap
+        await usdc.mint(client2.address, parseUnits('150000', usdcDecimals));
+        await expect(
+            from(client2, usdc).approve(crowdsale.target, parseUnits('150000', usdcDecimals))
+        ).to.be.fulfilled;
+        expect(await usdc.allowance(client2.address, crowdsale.target)).to.eq(parseUnits('150000', usdcDecimals));
+        await expect(
+            from(client2, crowdsale).purchaseFromUsdc(parseUnits('150000', usdcDecimals))
+        ).to.be.fulfilled;
+
+        // ok
         await expect(from(signers.owner, crowdsale).withdraw(parseUnits('65', usdcDecimals), signers.owner.address)).to.be.fulfilled;
         
         expect(await usdc.balanceOf(signers.owner.address)).to.eq(parseUnits('65', usdcDecimals));
-        expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('35', usdcDecimals));
+        expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('150035', usdcDecimals));
     })
 
     it('should respect the crowdsale schedule by sold supply', async() => {
@@ -406,6 +420,66 @@ describe('Keycoin', function () {
         const daoSupBal = await parseEther((parseInt(await formatEther(cBal)) / 2).toString());;
         expect(await keycoin.balanceOf(daoWallet.address)).to.eq(daoSupBal);
         
-    
+    })
+
+    it('should be refundable after end of crowdsale if softcap is not reached', async() => {
+        const client1 = signers.user1;
+        const client2 = signers.user2;
+        
+        // give USDC to clients
+        await usdc.mint(client1.address, parseUnits("100000", usdcDecimals));
+        await usdc.mint(client2.address, parseUnits("100000", usdcDecimals));
+
+        // open crowdsale
+        await expect(from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)).not.to.be.rejected;
+
+        // sell below soft-cap (140k$)
+        await expect(
+            from(client1, usdc).approve(crowdsale.target, parseUnits('100000', usdcDecimals))
+        ).to.be.fulfilled;
+        await expect(
+            from(client1, crowdsale).purchaseFromUsdc(parseUnits('100000', usdcDecimals))
+        ).to.be.fulfilled;
+        await expect(
+            from(client2, usdc).approve(crowdsale.target, parseUnits('40000', usdcDecimals))
+        ).to.be.fulfilled;
+        await expect(
+            from(client2, crowdsale).purchaseFromUsdc(parseUnits('40000', usdcDecimals))
+        ).to.be.fulfilled;
+
+        // refund impossible before end of last schedule
+        await expect(from(client1, crowdsale).refundMe()).to.be.rejectedWith("CROWDSALE ONGOING");
+
+
+        // goto crowdsale end
+        const lastSchedule = await crowdsale.schedule('15');
+        const crowdsaleEndUnix = parseInt(lastSchedule) + 10; 
+        await time.increaseTo(crowdsaleEndUnix);
+
+        // owner tries to `closeCrowdsale_sendToDao_burnUnsold` => failed   
+        await expect(from(signers.owner, crowdsale).closeCrowdsale_sendToDao_burnUnsold(signers.user4.address)).to.be.rejectedWith('SOFTCAP UNREACHED');
+        
+        // non-clients can't be refunded
+        await expect(from(signers.user3, crowdsale).refundMe()).to.be.rejectedWith("NO PURCHASE");  // non-client
+
+        expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('140000', usdcDecimals));
+
+        // refund client 1
+        expect(await usdc.balanceOf(client1.address)).to.eq(parseUnits('0', usdcDecimals));
+        await expect(from(client1, crowdsale).refundMe()).not.to.be.rejected;
+        expect(await usdc.balanceOf(client1.address)).to.eq(parseUnits('100000', usdcDecimals));
+
+        expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('40000', usdcDecimals));
+
+        // refund client 2
+        expect(await usdc.balanceOf(client2.address)).to.eq(parseUnits('60000', usdcDecimals));
+        await expect(from(client2, crowdsale).refundMe()).not.to.be.rejected;
+        expect(await usdc.balanceOf(client2.address)).to.eq(parseUnits('100000', usdcDecimals));
+
+        expect(await usdc.balanceOf(crowdsale.target)).to.eq(parseUnits('0', usdcDecimals));
+
+        // check that clients can't be refunded more than once
+        await expect(from(client1, crowdsale).refundMe()).to.be.rejectedWith("NO PURCHASE");        // already refunded
+
     })
 }) 
