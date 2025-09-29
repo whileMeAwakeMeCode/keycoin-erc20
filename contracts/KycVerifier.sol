@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * @title Monkey-Co KycVerifier
- * @author @Mat L.
+ * @author Mathieu L.
  * @notice Monkey-Co KYC validation module
  */
 contract KycVerifier {
@@ -42,9 +42,8 @@ contract KycVerifier {
      * @param signature the bytes32 encoded KYC signature itself
      */
     function _checkKyc(address user, uint256 deadline, bytes memory signature) internal view {
-        if (kycSigner != address(0)) {
-            require(verifyKyc(user, deadline, signature), "kyc-invalid");
-        }
+        require(kycSigner != address(0), "INVALID-KYC-SIGNER");
+        require(verifyKyc(user, deadline, signature), "INVALID-KYC");
     }
 
     // EIP-191 (Ethereum Signed Message)

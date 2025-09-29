@@ -6,7 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./KycVerifier.sol";
+import "../KycVerifier.sol";
 
 abstract contract KEYStakingVault is Ownable, KycVerifier, ReentrancyGuard, Pausable {
 
@@ -18,7 +18,7 @@ abstract contract KEYStakingVault is Ownable, KycVerifier, ReentrancyGuard, Paus
     uint256 public totalStaked;            
     uint256 public totalPositions;
 
-    // user => position id (pid) => Position{}
+    // user => position id (pid) => Position
     mapping(address => mapping(uint256 => Position)) public userPositions; 
     // positions counter
     mapping(address => uint256) public userPositionCount; 
@@ -74,7 +74,7 @@ abstract contract KEYStakingVault is Ownable, KycVerifier, ReentrancyGuard, Paus
         totalPositions += 1;
         totalStaked += amount;
 
-        // The Staked event must be catched by Monkey-Co Serveur => DB => UI
+        // The Staked event must be catched by Monkey-Co Server => DB => UI
         emit Staked(sender, pid, amount, lockMonths, projectId);
     }
 

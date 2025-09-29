@@ -6,7 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./KycVerifier.sol";
+import "../KycVerifier.sol";
 
 abstract contract USDStakingVault is Ownable, KycVerifier, ReentrancyGuard, Pausable {
 
@@ -50,15 +50,15 @@ abstract contract USDStakingVault is Ownable, KycVerifier, ReentrancyGuard, Paus
         uint256 amount,
         uint16 lockMonths,
         uint32 projectId,
-        uint256 deadline,            
-        bytes calldata signature     
+        uint256 kycDeadline,            
+        bytes calldata kycSignature     
     ) external nonReentrant whenNotPaused {
 
         require(amount > 0, "stake-amount-zero");
         require(lockMonths > 0 && lockMonths <= 36, "lock-out-of-range"); // allow > Dmax for future boosts over 24 months
 
         address sender = _msgSender();
-        _checkKyc(sender, deadline, signature);
+        _checkKyc(sender, kycDeadline, kycSignature);
 
         // Pull tokens
         require(IERC20(usd).transferFrom(sender, address(this), amount), "transferFrom-failed");

@@ -9,7 +9,7 @@ interface IMintableERC20 {
 
 /** [ Reward Formula Isolation ]
  * @title EmissionController
- * @author @Mat L.
+ * @author Mathieu L.
  * @notice Monkey-Co Staking Emission Controller module
  */
 contract EmissionController is Ownable {

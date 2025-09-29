@@ -10,6 +10,10 @@ import "./Storage.sol";
 import "./IKeycoinVesting.sol";
 import "./IKeycoinCrowdsale.sol";
 
+/**
+ * @title Monkey Co Offcial KEYCOIN ERC-20 Token
+ * @author Mathieu L.
+ */
 contract Keycoin is
   Initializable,
   ERC20Upgradeable,

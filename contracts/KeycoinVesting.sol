@@ -13,13 +13,16 @@ contract KeycoinVesting is Ownable {
     struct SupplyGroupVesting {
         uint unvested;
         uint released;
-        uint64 cliff;       // in month
-        uint64 duration;    // in month
+        uint64 cliff;       // lock time in month
+        uint64 duration;    // vesting duration in month
         uint64 start;
         uint64 end;
     }
 
+    // supply group => SupplyGroupVesting
     mapping(bytes32 => SupplyGroupVesting) public supplyGroupVesting;
+    // account => released amount
+    mapping(address => uint256) public releasedOf;
 
     constructor(address __owner, address __keycoinERC20) Ownable(__owner) {
         keycoinERC20 = __keycoinERC20;
@@ -112,6 +115,7 @@ contract KeycoinVesting is Ownable {
         require(rAmount > 0, "UNRELEASABLE YET");
         SupplyGroupVesting memory vesting = supplyGroupVesting[supplyGroup];
         vesting.released += rAmount;
+        releasedOf[to] += rAmount;
         SafeERC20.safeTransfer(IERC20(keycoinERC20), to, rAmount);
     }
     
