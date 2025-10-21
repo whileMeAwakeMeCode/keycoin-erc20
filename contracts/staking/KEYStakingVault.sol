@@ -5,10 +5,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "../KycVerifier.sol";
 
-abstract contract KEYStakingVault is Ownable, KycVerifier, ReentrancyGuard, Pausable {
+abstract contract KEYStakingVault is KycVerifier, ReentrancyGuard, Pausable {
 
     address public keycoin;     
 
@@ -40,7 +39,7 @@ abstract contract KEYStakingVault is Ownable, KycVerifier, ReentrancyGuard, Paus
         uint32 projectId
     );
 
-    constructor(address __kycSigner, address __keycoin) KycVerifier(__kycSigner) {
+    constructor(address __kycSigner, address __keycoin, address __owner) KycVerifier(__kycSigner, __owner) {
         keycoin = __keycoin;
     }
 

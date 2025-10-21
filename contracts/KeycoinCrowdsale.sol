@@ -4,7 +4,6 @@ pragma solidity ^0.8.0;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "./KycVerifier.sol";
 
 // import "hardhat/console.sol";
@@ -48,20 +47,19 @@ interface IERC20Burn is IERC20 {
     - 0.080 US$ for 1 KEYCOIN
     - Ends five months after crowdsale start
 */
-contract KeycoinCrowdsale is Ownable, KycVerifier, ReentrancyGuard {
+contract KeycoinCrowdsale is KycVerifier, ReentrancyGuard {
 
     bool public crowdsaleIsOpened;
     address public keycoinToken;
     address public usdcContract;
-    uint public usdcDecimals;
-    uint public totalUsdcWithdrawn;
+    uint256 public usdcDecimals;
+    uint256 public totalUsdcWithdrawn;
     uint256[] public schedule;
     
     mapping(address => uint) public usdcInvestNoDecimals;
 
     constructor(address __owner, address __keycoinToken, address __usdcContract, address __kycSigner) 
-    Ownable(__owner) 
-    KycVerifier(__kycSigner)
+    KycVerifier(__kycSigner, __owner)
     {
         require(__keycoinToken != address(0), "invalid token address");
         require(__usdcContract != address(0), "invalid collateral address");
@@ -206,15 +204,6 @@ contract KeycoinCrowdsale is Ownable, KycVerifier, ReentrancyGuard {
         return _quoteFromUsdc(usdcAmount);
     }
 
-    /** [public][non-reentrant][usdc decimals dependent]
-    * @notice Mint KEYCOIN tokens from USDC tokens by-passing KYC Signature Check
-    * @dev Public method distributing KEYCOIN tokens to the msg.sender (non-reentrant) 
-    * @param approvedUsdcAmount an amount of USDC already approved by sender on `usdcContract` (MAX 50$)
-    */
-    function purchaseFromUsdc(uint approvedUsdcAmount) public {
-        require(approvedUsdcAmount <= 50 * 10**usdcDecimals, "KYC-REQUIRED");
-        _purchaseFromUsdc(approvedUsdcAmount);
-    }
 
     /** [public][non-reentrant][usdc decimals dependent]
     * @notice Mint KEYCOIN tokens from USDC tokens with KYC Signature Check
@@ -223,7 +212,7 @@ contract KeycoinCrowdsale is Ownable, KycVerifier, ReentrancyGuard {
     * @param deadline timestamp of the signature availability deadline
     * @param signature the bytes32 encoded KYC signature itself
     */
-    function purchaseFromUsdcKyc(uint approvedUsdcAmount, uint256 deadline, bytes memory signature) public {
+    function purchaseFromUsdc(uint approvedUsdcAmount, uint256 deadline, bytes memory signature) public {
         _checkKyc(_msgSender(), deadline, signature);
         _purchaseFromUsdc(approvedUsdcAmount);
     }

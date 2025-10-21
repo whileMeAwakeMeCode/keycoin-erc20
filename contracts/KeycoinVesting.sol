@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 using SafeERC20 for IERC20;
 
-import "hardhat/console.sol";
+// import "hardhat/console.sol";
 
 /**
  * @title KeycoinVesting
@@ -186,7 +186,7 @@ contract KeycoinVesting is Ownable {
         vesting.released += amount;
         vesting.unvested -= amount;
         releasedOf[to] += amount;
-        
+
         SafeERC20.safeTransfer(IERC20(keycoinERC20), to, amount);
     }
 }

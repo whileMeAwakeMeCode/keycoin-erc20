@@ -37,22 +37,18 @@ describe('Keycoin', function () {
     const MINTER_ROLE = keccak256(toUtf8Bytes("MINTER_ROLE"));
     const UPGRADER_ROLE = keccak256(toUtf8Bytes("UPGRADER_ROLE"));
 
+    /**
+     * @dev Get a contract instance with signer connected
+     * @param {*} sig Signer wallet
+     * @param {*} contract Contract instance
+     */
     let from = (sig, contract) => ((contract || keycoin).connect(sig));
 
-    async function approveAndPurchase(cli, value) {
-        await from(cli, usdc).approve(crowdsale.target, value);
-        
-        if (parseInt(formatUnits(value, usdcDecimals)) > 50) {
-            // KYC CHECK
-            const { deadline, signature } = await getKycSignature(cli.address);
-            await from(cli, crowdsale).purchaseFromUsdcKyc(value, deadline, signature);
-        }
-        else {
-            // BYPASS KYC CHECK
-            await from(cli, crowdsale).purchaseFromUsdc(value);
-        }        
-    }
-
+    /**
+     * @dev Sign a KYC for an account as the authorised `kycSigner` [EIP-191]
+     * @param {*} userAddress the address of the customer to sign for
+     * @returns {object} { deadline, signature }
+     */
     async function getKycSignature(userAddress) {
         const deadline = Math.floor(Date.now() / 1000) + 3600;
 
@@ -70,6 +66,22 @@ describe('Keycoin', function () {
         return { deadline, signature };
     }
 
+    /**
+     * @dev Approve an amount of USDC to spend and purchase KEYCOIN
+     * @param {*} cli Wallet of spender
+     * @param {*} value Value of USDC to spend
+     */
+    async function approveAndPurchase(cli, value) {
+        await from(cli, usdc).approve(crowdsale.target, value);
+        const { deadline, signature } = await getKycSignature(cli.address);
+        await from(cli, crowdsale).purchaseFromUsdc(value, deadline, signature);  
+    }
+
+    /**
+     * @dev Retrieve the datas of a supply group
+     * @param {*} supplyName the name of the target supply group
+     * @returns {object} SupplyGroup data
+     */
     async function getSupplyGroupVesting(supplyName) {
         const sCode = await keccak256(toUtf8Bytes(supplyName));
         const supplyGroupVesting = await vestingWallet.supplyGroupVesting(sCode);
@@ -108,10 +120,9 @@ describe('Keycoin', function () {
         const vestingWalletFactory = await ethers.getContractFactory('KeycoinVesting');
         vestingWallet = await vestingWalletFactory.deploy(signers.owner.address, keycoin.target);
         await vestingWallet.waitForDeployment();
-        // call keycoin.setVestingWallet
         await keycoin.setVestingWallet(vestingWallet.target);
 
-        const USDCMockFactory = await ethers.getContractFactory('USDCMock');
+        const USDCMockFactory = await ethers.getContractFactory('contracts/test/USDCMock.sol:USDCMock');
         usdc = await USDCMockFactory.deploy();
         await usdc.waitForDeployment();
         usdcDecimals = parseInt(await usdc.decimals());
@@ -126,6 +137,8 @@ describe('Keycoin', function () {
         await network.provider.send("evm_revert", [snapshotId]);
     });
 
+
+    /* * *   U N I T   T E S T S   * * */
     it('should set the correct roles', async function () {
         expect(await keycoin.hasRole(DEFAULT_ADMIN_ROLE, signers.owner.address)).to.eq(true);
         expect(await keycoin.hasRole(PAUSER_ROLE, signers.pauser.address)).to.eq(true);
@@ -267,8 +280,8 @@ describe('Keycoin', function () {
 
     it("should upgrade to a new version", async function () {
         // deploy new implem
-        const KeycoinV2 = await ethers.getContractFactory("KeycoinV2", signers.upgrader);
-        const KeycoinV2_BAD_SIGNER = await ethers.getContractFactory("KeycoinV2", signers.owner);
+        const KeycoinV2 = await ethers.getContractFactory("contracts/test/KeycoinV2.sol:KeycoinV2", signers.upgrader);
+        const KeycoinV2_BAD_SIGNER = await ethers.getContractFactory("contracts/test/KeycoinV2.sol:KeycoinV2", signers.owner);
     
         // upgrade
         try {
@@ -373,7 +386,7 @@ describe('Keycoin', function () {
         const client4 = signers.user3;
 
         const bal = parseUnits("1000000", usdcDecimals);
-        const val = parseUnits("100000", usdcDecimals); // max supply purchase 2320000 $
+        const val = parseUnits("100000", usdcDecimals); 
         
         // give USDC to clients
         await usdc.mint(client1.address, bal);
@@ -443,7 +456,7 @@ describe('Keycoin', function () {
         const client2 = signers.user2;
         const daoWallet = signers.user3;
 
-        const val = parseUnits("1150000", usdcDecimals); // max supply purchase 2320000 $
+        const val = parseUnits("1150000", usdcDecimals); 
         
         // give USDC to clients
         await usdc.mint(client1.address, val);
@@ -487,7 +500,6 @@ describe('Keycoin', function () {
         await time.increaseTo(crowdsaleEndUnix);
 
         // CROWDSALE-CLOSED
-        // expect(await crowdsale.crowdsaleIsOpened()).to.be.false;
         await expect(approveAndPurchase(client2, parseUnits('1000', usdcDecimals))).to.be.rejectedWith('SOLD OUT');
 
         // delay crowdsale
@@ -569,12 +581,10 @@ describe('Keycoin', function () {
         ).to.be.fulfilled;
 
         const teamVesting = await getSupplyGroupVesting("TEAM");
-        console.log('teamVesting', teamVesting);
 
         const oneMonth = parseInt(days(365) / 12);
         const afterCliffDate = teamVesting.start + (teamVesting.cliff * oneMonth);
      
-
         // releasable after one month
         expect(
             (await vestingWallet.releasable(teamVesting.code, afterCliffDate+oneMonth)).toString()
@@ -596,8 +606,6 @@ describe('Keycoin', function () {
         expect(
             (await vestingWallet.releasable(teamVesting.code, 0)).toString()
         ).to.eq('1400000000000000000000000');
-            
-
         
     })
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import "./Keycoin.sol";
+import "../Keycoin.sol";
 
 contract KeycoinV2 is
   Keycoin

@@ -3,13 +3,15 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
 
 /**
  * @title Monkey-Co KycVerifier
  * @author Mathieu L.
  * @notice Monkey-Co KYC validation module
  */
-contract KycVerifier {
+contract KycVerifier is Ownable {
     using ECDSA for bytes32;
 
     address public kycSigner; // Trusted signer set by admin
@@ -20,7 +22,7 @@ contract KycVerifier {
      * @dev On build : set `kycSigner` responsible for 
      * @param _kycSigner kyc signer/validator address (contract OR EOA)
      */
-    constructor(address _kycSigner) {
+    constructor(address _kycSigner, address __owner) Ownable(__owner) {
         kycSigner = _kycSigner;
     }
 
