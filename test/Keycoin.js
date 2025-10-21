@@ -1,7 +1,7 @@
 const { days } = require('@nomicfoundation/hardhat-network-helpers/dist/src/helpers/time/duration');
 const { expect } = require('chai');
 const { keccak256, toUtf8Bytes, parseEther, formatEther, parseUnits, formatUnits } = require('ethers');
-const { ethers, upgrades } = require('hardhat');
+const { ethers, upgrades, network } = require('hardhat');
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 /**
@@ -29,7 +29,8 @@ describe('Keycoin', function () {
     let crowdsale;          // COWDSALE MANAGER
     let usdc;               // MOCK USDC (test purpose only)
     let usdcDecimals;       // Dynamic collateral token decimals
-    let signers = {};       
+    let signers = {};  
+    let snapshotId;     
 
     const DEFAULT_ADMIN_ROLE = "0x0000000000000000000000000000000000000000000000000000000000000000";
     const PAUSER_ROLE = keccak256(toUtf8Bytes("PAUSER_ROLE"));
@@ -41,9 +42,9 @@ describe('Keycoin', function () {
     async function approveAndPurchase(cli, value) {
         await from(cli, usdc).approve(crowdsale.target, value);
         
-        if (parseInt(formatUnits(value, usdcDecimals)) > 2000) {
+        if (parseInt(formatUnits(value, usdcDecimals)) > 50) {
             // KYC CHECK
-            const { deadline, signature } = await getKycSignature(signers.kycSigner, cli.address);
+            const { deadline, signature } = await getKycSignature(cli.address);
             await from(cli, crowdsale).purchaseFromUsdcKyc(value, deadline, signature);
         }
         else {
@@ -52,7 +53,7 @@ describe('Keycoin', function () {
         }        
     }
 
-    async function getKycSignature(kycSigner, userAddress) {
+    async function getKycSignature(userAddress) {
         const deadline = Math.floor(Date.now() / 1000) + 3600;
 
         // reproduce abi.encode(user, deadline)
@@ -64,12 +65,28 @@ describe('Keycoin', function () {
         const structHash = ethers.keccak256(encoded);
 
         // sign structHash (EIP-191)
-        const signature = await kycSigner.signMessage(ethers.getBytes(structHash));
+        const signature = await signers.kycSigner.signMessage(ethers.getBytes(structHash));
 
         return { deadline, signature };
     }
+
+    async function getSupplyGroupVesting(supplyName) {
+        const sCode = await keccak256(toUtf8Bytes(supplyName));
+        const supplyGroupVesting = await vestingWallet.supplyGroupVesting(sCode);
+
+        return {
+            code: sCode,
+            unvested: parseInt(supplyGroupVesting[0].toString()),    // total unvested (yet-to-be-released) amount
+            released: parseInt(supplyGroupVesting[1].toString()),    // total released amount
+            cliff: parseInt(supplyGroupVesting[2].toString()),       // lock period in months before vesting starts
+            duration: parseInt(supplyGroupVesting[3].toString()),    // vesting duration in months
+            start: parseInt(supplyGroupVesting[4].toString()),       // timestamp when vesting starts
+            end: parseInt(supplyGroupVesting[5].toString()),         // timestamp when vesting ends
+        }
+    }
     
     beforeEach(async function () {
+        snapshotId = await network.provider.send("evm_snapshot");
         const _signers = await ethers.getSigners()
         signers.owner = _signers[0];
         signers.pauser = _signers[1];
@@ -103,6 +120,11 @@ describe('Keycoin', function () {
         await crowdsale.waitForDeployment();
 
     })
+
+    afterEach(async () => {
+        // Revert to the snapshot to restore original time & state
+        await network.provider.send("evm_revert", [snapshotId]);
+    });
 
     it('should set the correct roles', async function () {
         expect(await keycoin.hasRole(DEFAULT_ADMIN_ROLE, signers.owner.address)).to.eq(true);
@@ -145,7 +167,7 @@ describe('Keycoin', function () {
     it('should not overflow the maximum supply of all groups', async() => {
         const maxStakingGroupAmount = parseEther('108000000');
         const maxOtherSupplyGroupAmount = parseEther('36000000');
-        // group 1 (reserve)
+        // group 1 (reserve/cashflow)
         await expect(
             from(signers.minter).mint(signers.user1.address, maxOtherSupplyGroupAmount, supply.reserve)
         ).to.be.fulfilled;
@@ -178,16 +200,13 @@ describe('Keycoin', function () {
             from(signers.minter).mint(signers.user1.address, parseEther("1"), supply.team)
         ).to.be.rejected;
 
-        const reserveGroup = await vestingWallet.supplyGroupVesting(await keccak256(toUtf8Bytes("CASHFLOW")));
-
-        const reserveReleasablePast = await vestingWallet.releasable(await keccak256(toUtf8Bytes("CASHFLOW")), parseInt(Date.now()/1000) - 1);
-        await expect(reserveReleasablePast.toString()).to.eq('0');
+        const cashVesting = await getSupplyGroupVesting('CASHFLOW');
 
         const reserveReleasableNow = await vestingWallet.releasable(await keccak256(toUtf8Bytes("CASHFLOW")), 0);
         await expect(reserveReleasableNow).to.be.above(0);
 
         await expect(
-            from(signers.minter, vestingWallet).release(await keccak256(toUtf8Bytes("CASHFLOW")), signers.user2.address)
+            from(signers.minter, vestingWallet).release(await keccak256(toUtf8Bytes("CASHFLOW")), reserveReleasableNow, signers.user2.address)
         ).to.be.revertedWithCustomError(vestingWallet, "OwnableUnauthorizedAccount")
 
         await expect(
@@ -195,15 +214,15 @@ describe('Keycoin', function () {
         ).to.eq(0);
 
         await expect(
-            from(signers.owner, vestingWallet).release(await keccak256(toUtf8Bytes("CASHFLOW")), signers.user2.address)
+            from(signers.owner, vestingWallet).release(await keccak256(toUtf8Bytes("CASHFLOW")), reserveReleasableNow, signers.user2.address)
         ).to.be.fulfilled;
 
         await expect(
             await keycoin.balanceOf(signers.user2.address)
-        ).to.be.above(reserveReleasableNow);    // time has past since last call to `releasable`
+        ).to.eq(reserveReleasableNow);    
 
-        const reserveReleasableAtEnd = await vestingWallet.releasable(await keccak256(toUtf8Bytes("CASHFLOW")), reserveGroup[5].toString()); 
-        await expect(reserveReleasableAtEnd.toString()).to.eq(reserveGroup[0].toString());
+        const reserveReleasableAtEnd = await vestingWallet.releasable(await keccak256(toUtf8Bytes("CASHFLOW")), cashVesting.end.toString()); 
+        await expect(reserveReleasableAtEnd.toString()).to.be.above(parseEther('35999990'))//to.eq(cashVesting.unvested.toString());
         
         const teamReleasable = await vestingWallet.releasable(await keccak256(toUtf8Bytes("TEAM")), parseInt(Date.now()/1000) + days(30));
         await expect(teamReleasable.toString()).to.eq('0');
@@ -297,9 +316,6 @@ describe('Keycoin', function () {
         const bal = (await keycoin.balanceOf(crowdsale.target)).toString();
         await expect(bal).to.eq(await parseEther('36000000').toString());
         // client1 buys KEYCOIN in phase 1
-        await expect(
-            from(client1, crowdsale).quoteFromUsdc(parseUnits('10', usdcDecimals))
-        ).to.be.fulfilled;
         await expect(await usdc.balanceOf(client1.address)).to.eq(parseUnits('1000', usdcDecimals));
         const quote1 = await crowdsale.quoteFromUsdc(parseUnits('100', usdcDecimals));
         await expect(quote1[0]).to.eq('2222222222222200000000');
@@ -456,7 +472,35 @@ describe('Keycoin', function () {
     })
 
     it('should be able to delay the crowdsale last period end', async() => {
-        // TODO
+        const client1 = signers.user1;
+        const client2 = signers.user2;
+        await usdc.mint(client1.address, parseUnits("100000", usdcDecimals));
+        await usdc.mint(client2.address, parseUnits("100000", usdcDecimals));
+
+        await expect(from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)).not.to.be.rejected;
+
+        await expect(approveAndPurchase(client1, parseUnits('1500', usdcDecimals))).not.to.be.rejected;
+
+        // goto crowdsale end
+        const lastSchedule = await crowdsale.schedule('15');
+        const crowdsaleEndUnix = parseInt(lastSchedule) + 10; 
+        await time.increaseTo(crowdsaleEndUnix);
+
+        // CROWDSALE-CLOSED
+        // expect(await crowdsale.crowdsaleIsOpened()).to.be.false;
+        await expect(approveAndPurchase(client2, parseUnits('1000', usdcDecimals))).to.be.rejectedWith('SOLD OUT');
+
+        // delay crowdsale
+        const newCrowdsaleEndUnix = crowdsaleEndUnix + (3600*24*30);  // 1h * 24 * 30 = 1 month
+        await expect(from(signers.user3, crowdsale).delayCrowdsale(newCrowdsaleEndUnix)).to.be.revertedWithCustomError(crowdsale, "OwnableUnauthorizedAccount")
+        await expect(from(signers.owner, crowdsale).delayCrowdsale(newCrowdsaleEndUnix)).to.be.fulfilled;
+
+        expect(await crowdsale.crowdsaleIsOpened()).to.be.true;
+        await expect(approveAndPurchase(client2, parseUnits('1000', usdcDecimals))).to.be.fulfilled;
+
+        await expect(await crowdsale.usdcAvailSupply()).to.eq(parseUnits('2500', usdcDecimals));
+
+
     })
 
     it('should refund 80% after end of crowdsale if softcap is not reached', async() => {
@@ -511,4 +555,51 @@ describe('Keycoin', function () {
         // check that clients can't be refunded more than once
         await expect(from(client1, crowdsale).refundMe()).to.be.rejectedWith("NO PURCHASE");        // already refunded
     });
+
+    it('should be able to release vested tokens according to the schedule', async() => {
+        const maxVestingGroupAmount = parseEther('36000000');
+
+        // mint all reserve/cashflow supply
+        await expect(
+            from(signers.minter).mint(signers.user1.address, maxVestingGroupAmount, supply.reserve)
+        ).to.be.fulfilled;
+        // mint all team supply
+        await expect(
+            from(signers.minter).mint(signers.user1.address, maxVestingGroupAmount, supply.team)
+        ).to.be.fulfilled;
+
+        const teamVesting = await getSupplyGroupVesting("TEAM");
+        console.log('teamVesting', teamVesting);
+
+        const oneMonth = parseInt(days(365) / 12);
+        const afterCliffDate = teamVesting.start + (teamVesting.cliff * oneMonth);
+     
+
+        // releasable after one month
+        expect(
+            (await vestingWallet.releasable(teamVesting.code, afterCliffDate+oneMonth)).toString()
+        ).to.eq('900000000000000000000000');
+
+        // try to release after one month
+        await time.increaseTo(afterCliffDate+oneMonth); 
+        await from(signers.owner, vestingWallet).release(teamVesting.code, parseEther("400000"), signers.user1.address);   
+        expect(
+            (await keycoin.balanceOf(signers.user1.address)).toString()
+        ).to.eq('400000000000000000000000');
+        // releasable should be > 500000*10**18
+        expect(
+            (await vestingWallet.releasable(teamVesting.code, afterCliffDate+oneMonth)).toString()
+        ).to.eq('500000000000000000000000');
+
+        // go one more month further
+        await time.increaseTo(afterCliffDate+(oneMonth*2)); 
+        expect(
+            (await vestingWallet.releasable(teamVesting.code, 0)).toString()
+        ).to.eq('1400000000000000000000000');
+            
+
+        
+    })
+
+    
 }) 

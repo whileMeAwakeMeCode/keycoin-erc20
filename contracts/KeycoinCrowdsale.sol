@@ -209,17 +209,17 @@ contract KeycoinCrowdsale is Ownable, KycVerifier, ReentrancyGuard {
     /** [public][non-reentrant][usdc decimals dependent]
     * @notice Mint KEYCOIN tokens from USDC tokens by-passing KYC Signature Check
     * @dev Public method distributing KEYCOIN tokens to the msg.sender (non-reentrant) 
-    * @param approvedUsdcAmount an amount of USDC already approved by sender on `usdcContract` (MAX 2000$)
+    * @param approvedUsdcAmount an amount of USDC already approved by sender on `usdcContract` (MAX 50$)
     */
     function purchaseFromUsdc(uint approvedUsdcAmount) public {
-        require(approvedUsdcAmount <= 2000 * 10**usdcDecimals, "KYC-REQUIRED");
+        require(approvedUsdcAmount <= 50 * 10**usdcDecimals, "KYC-REQUIRED");
         _purchaseFromUsdc(approvedUsdcAmount);
     }
 
     /** [public][non-reentrant][usdc decimals dependent]
     * @notice Mint KEYCOIN tokens from USDC tokens with KYC Signature Check
     * @dev Public method distributing KEYCOIN tokens to the msg.sender (non-reentrant) 
-    * @param approvedUsdcAmount an amount of USDC already approved by sender on `usdcContract` (> 2000$)
+    * @param approvedUsdcAmount an amount of USDC already approved by sender on `usdcContract` (> 50$)
     * @param deadline timestamp of the signature availability deadline
     * @param signature the bytes32 encoded KYC signature itself
     */
