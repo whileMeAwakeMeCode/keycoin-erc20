@@ -9,8 +9,8 @@ import "../KycVerifier.sol";
 
 abstract contract USDStakingVault is KycVerifier, ReentrancyGuard, Pausable {
 
-    address public keycoin;     // KEYCOIN
-    address public usd;         // USD based stablecoin
+    address public immutable keycoin;     // KEYCOIN
+    address public immutable usd;         // USD based stablecoin
 
     uint256 public nextPositionId = 1;
 

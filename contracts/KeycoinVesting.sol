@@ -42,7 +42,10 @@ contract KeycoinVesting is Ownable {
         keycoinERC20 = __keycoinERC20;
         
         _setSupplyGroup(keccak256("TEAM"), 12, 40);
-        _setSupplyGroup(keccak256("CASHFLOW"), 0, 20);
+        _setSupplyGroup(keccak256("CASHFLOW"), 0, 8);   
+        // TODO :
+        // _setSupplyGroup(keccak256("CROWDSALE"), 0, 10);  // <-- The crowdsale supply received as vesting represents 80% of the original amount
+
     }
 
     /**

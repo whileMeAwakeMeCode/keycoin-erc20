@@ -16,10 +16,10 @@ contract KycVerifier is Ownable {
 
     address public kycSigner; // Trusted signer set by admin
 
-    event KycSignerUpdated(address newSigner);
+    event KycSignerUpdated(address indexed newSigner);
 
     /**
-     * @dev On build : set `kycSigner` responsible for 
+     * @dev On build : set `kycSigner` responsible for KYC verifications
      * @param _kycSigner kyc signer/validator address (contract OR EOA)
      */
     constructor(address _kycSigner, address __owner) Ownable(__owner) {
@@ -30,7 +30,7 @@ contract KycVerifier is Ownable {
      * @dev Externally set a new `kycSigner`
      * @param _newSigner kyc signer/validator address (contract OR EOA)
      */
-    function setKycSigner(address _newSigner) external /* onlyOwner */ {
+    function setKycSigner(address _newSigner) external onlyOwner {
         // onlyOwner in pratique
         require(_newSigner != address(0), "invalid");
         kycSigner = _newSigner;

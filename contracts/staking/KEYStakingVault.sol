@@ -5,11 +5,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../KycVerifier.sol";
 
-abstract contract KEYStakingVault is KycVerifier, ReentrancyGuard, Pausable {
+abstract contract KEYStakingVault is KycVerifier, ERC20, ReentrancyGuard, Pausable {
 
-    address public keycoin;     
+    address public immutable keycoin;     
 
     uint256 public nextPositionId = 1;
 
@@ -27,7 +28,7 @@ abstract contract KEYStakingVault is KycVerifier, ReentrancyGuard, Pausable {
         uint256 amount;        // staked principal
         uint48  start;         // start timestamp
         uint16  lockMonths;    // lock duration in months
-        uint32  projectId;     // linked project for E  /// TODO ====> /!\ PSFP NEEDED !! Set a global staking
+        uint32  projectId;     // linked project for E  
         uint32  lastClaimed;   // last claimed epoch id
     }
 
@@ -39,7 +40,15 @@ abstract contract KEYStakingVault is KycVerifier, ReentrancyGuard, Pausable {
         uint32 projectId
     );
 
-    constructor(address __kycSigner, address __keycoin, address __owner) KycVerifier(__kycSigner, __owner) {
+    event Unstaked(
+        address indexed user,
+        uint256 amount
+    );
+
+    constructor(address __kycSigner, address __keycoin, address __owner) 
+    KycVerifier(__kycSigner, __owner) 
+    ERC20("sKeycoin", "SKEYCOIN")
+    {
         keycoin = __keycoin;
     }
 
@@ -73,8 +82,48 @@ abstract contract KEYStakingVault is KycVerifier, ReentrancyGuard, Pausable {
         totalPositions += 1;
         totalStaked += amount;
 
+        // mint sKEYCOIN
+        _mint(sender, amount);
+
         // The Staked event must be catched by Monkey-Co Server => DB => UI
         emit Staked(sender, pid, amount, lockMonths, projectId);
+    }
+
+    function unstake(uint amount) external nonReentrant whenNotPaused {
+        require(amount > 0, "Amount must be greater than 0");
+        address sender = _msgSender();
+        require(balanceOf(sender) >= amount, "Insufficient sKEYCOIN balance");
+        require(_totalStakedOf(sender) >= amount, "Insufficient staked amount");
+        
+        // Burn sKEYCOIN tokens
+        _burn(sender, amount);
+        
+        // Update user's stake positions
+        uint pRest = amount;
+        uint pCount = userPositionCount[sender];
+        for (uint i = 0; i < pCount; i++) {
+            if (pRest > 0) {
+                if (userPositions[sender][i].amount >= pRest) {
+                    userPositions[sender][i].amount -= pRest;      
+                    pRest = 0;
+                    userPositionCount[sender] -= 1;
+                    totalPositions -= 1;
+                }   
+                else {
+                    pRest -= userPositions[sender][i].amount;
+                    userPositions[sender][i].amount = 0;
+                }   
+            }
+        }
+        
+                
+        // Transfer KEYCOIN back to the user
+        require(IERC20(keycoin).transfer(sender, amount), "Transfer failed");
+        
+        // Update total staked amount
+        totalStaked -= amount;
+        
+        emit Unstaked(sender, amount);
     }
 
 
@@ -82,5 +131,14 @@ abstract contract KEYStakingVault is KycVerifier, ReentrancyGuard, Pausable {
         return userPositions[user][pid];
     }
 
+    function _totalStakedOf(address account) internal view returns(uint _tStake) {
+        for (uint i = 0; i < userPositionCount[account]; i++) {
+            _tStake += userPositions[account][i].amount;
+        }
+    }
+
+    function totalStakedOf(address account) public view returns(uint tStake) {
+        tStake = _totalStakedOf(account);
+    }
 
 }

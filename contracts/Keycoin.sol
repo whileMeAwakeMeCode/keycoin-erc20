@@ -111,7 +111,7 @@ contract Keycoin is
 
     currentSupply[supplyGroup] += amount;
 
-    if (supplyGroup < 3) {  // team or cashflow : vesting wallet
+    if (supplyGroup < 3) {  // team or cashflow : vesting wallet    // TODO: VestingWallet pour crowdsale supply aussi !
       _mintToVestingWallet(supplyGroups[supplyGroup], amount);
     }
     else _mint(to, amount);
