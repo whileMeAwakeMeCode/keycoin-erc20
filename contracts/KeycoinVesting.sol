@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts (last updated v5.3.0) (finance/VestingWallet.sol)
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -7,189 +6,204 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 using SafeERC20 for IERC20;
 
-// import "hardhat/console.sol";
-
 /**
- * @title KeycoinVesting
- * @dev This contract manages vesting schedules for different supply groups of the Keycoin token.
- * It allows Keycoin (the token contract) to allocate tokens to supply groups and the owner to
- * release vested tokens according to linear vesting schedules with optional cliffs.
+ * @title KeycoinVesting v2 (beneficiary actions based)
+ * @dev Support multiple vesting receipts per (supplyGroup, beneficiary).
+ * Each reception creates a new vesting schedule with its own start/end.
+ * - receiveVesting is called by the Keycoin token contract and MUST provide a beneficiary address.
+ * - The supply group defines the cliff and duration (in months). The start timestamp is either
+ *   provided by the caller or defaults to block.timestamp. end = start + (cliff + duration) months.
+ * - release(...) allows the beneficiary to release an amount from a supply group.
+ *   Releases are taken from schedules in FIFO order (oldest schedules first) and only from vested amounts.
  */
 contract KeycoinVesting is Ownable {
-    address internal keycoinERC20;
+    address internal immutable keycoinERC20;
 
-    struct SupplyGroupVesting {
-        uint unvested;     // total unvested (yet-to-be-released) amount
-        uint released;     // total released amount
-        uint64 cliff;      // lock period in months before vesting starts
-        uint64 duration;   // vesting duration in months
-        uint64 start;      // timestamp when vesting starts
-        uint64 end;        // timestamp when vesting ends
+    struct SupplyGroup {
+        uint64 cliff;      // months
+        uint64 duration;   // months
+        bool exists;
     }
 
-    // supply group identifier => vesting configuration
-    mapping(bytes32 => SupplyGroupVesting) public supplyGroupVesting;
+    struct VestingSchedule {
+        uint256 amount;    // total amount allocated to this schedule
+        uint256 released;  // amount already released from this schedule
+        uint64 start;      // start timestamp
+        uint64 end;        // end timestamp (start + cliff + duration months)
+    }
+
+    // supply group id => supply group config
+    mapping(bytes32 => SupplyGroup) public supplyGroups;
+
+    // supplyGroup => beneficiary => schedules[]
+    mapping(bytes32 => mapping(address => VestingSchedule[])) private schedules;
+
+    // supplyGroup => total unvested across all schedules
+    mapping(bytes32 => uint256) public totalUnvested;
+
     // account => total amount released to that address
     mapping(address => uint256) public releasedOf;
 
-    /**
-     * @dev Initializes the contract with an owner and the Keycoin ERC20 token address.
-     * Also sets up default supply groups (TEAM and CASHFLOW).
-     * @param __owner The address that will own this contract.
-     * @param __keycoinERC20 The address of the Keycoin ERC20 token contract.
-     */
+    event SupplyGroupSet(bytes32 indexed sGroup, uint64 cliffMonths, uint64 durationMonths);
+    event VestingReceived(bytes32 indexed sGroup, address indexed beneficiary, uint256 amount, uint64 start, uint64 end, uint256 scheduleIndex);
+    event Released(bytes32 indexed sGroup, address indexed beneficiary, uint256 amount);
+
     constructor(address __owner, address __keycoinERC20) Ownable(__owner) {
         keycoinERC20 = __keycoinERC20;
-        
+
+        // TEAM: 12 months cliff, then 2.5% per month
         _setSupplyGroup(keccak256("TEAM"), 12, 40);
-        _setSupplyGroup(keccak256("CASHFLOW"), 0, 8);   
-        // TODO :
-        // _setSupplyGroup(keccak256("CROWDSALE"), 0, 10);  // <-- The crowdsale supply received as vesting represents 80% of the original amount
+        // CASHFLOW/RESERVE: no cliff, 5% per month
+        _setSupplyGroup(keccak256("CASHFLOW"), 0, 20);
+        // CROWDSALE: no cliff, then 50% per month (only 80% of the minted tokens are received by this Vesting contract in that group)
+        _setSupplyGroup(keccak256("CROWDSALE"), 0, 2);      
 
     }
 
-    /**
-     * @dev Modifier to ensure a valid supply group exists.
-     * @param _sGroup The bytes32 identifier of the supply group to check.
-     */
     modifier checkSupplyGroup(bytes32 _sGroup) {
-        require(
-            supplyGroupVesting[_sGroup].duration > 0,
-            "INVALID SUPPLY GROUP"
-        );
+        require(supplyGroups[_sGroup].exists, "INVALID SUPPLY GROUP");
         _;
     }
 
-    /**
-     * @dev Internal function to create and configure a new supply group vesting schedule.
-     * @param _sGroup The bytes32 identifier of the supply group.
-     * @param _cliff The cliff duration in months before vesting starts.
-     * @param _duration The total vesting duration in months after the cliff.
-     */
-    function _setSupplyGroup(bytes32 _sGroup, uint64 _cliff, uint64 _duration) internal {
-        require(supplyGroupVesting[_sGroup].duration == 0, "EXISTING GROUP");
-        require(_duration > 0, "ZERO DURATION");
-        uint oneMonth = (365 days) / 12;
-        uint end = block.timestamp + (_cliff * oneMonth) + (_duration * oneMonth); 
-        supplyGroupVesting[_sGroup] = SupplyGroupVesting(0, 0, _cliff, _duration, uint64(block.timestamp), uint64(end));
-    }
-
-    /**
-     * @dev Allows the contract owner to set a new supply group configuration.
-     * @param _sGroup The bytes32 identifier of the new supply group.
-     * @param _cliff The cliff duration in months before vesting starts.
-     * @param _duration The total vesting duration in months after the cliff.
-     *
-     * Requirements:
-     * - Caller must be the contract owner.
-     */
-    function setSupplyGroup(bytes32 _sGroup, uint64 _cliff, uint64 _duration) external onlyOwner {
-        _setSupplyGroup(_sGroup, _cliff, _duration);
-    }
-
-    /**
-     * @dev Modifier restricting access to only the Keycoin ERC20 contract.
-     */
     modifier onlyKeycoin() {
         require(address(_msgSender()) == address(keycoinERC20), "KEYCOIN ONLY");
         _;
     }
 
-    /**
-     * @dev Called by the Keycoin contract when tokens are assigned to a specific supply group for vesting.
-     * @param _sGroup The bytes32 identifier of the supply group receiving tokens.
-     * @param _amount The amount of tokens added to the vesting schedule.
-     * @return _received Boolean indicating whether the tokens were successfully registered.
-     *
-     * Requirements:
-     * - Caller must be the Keycoin contract.
-     * - The supply group must exist.
-     */
-    function receiveVesting(bytes32 _sGroup, uint _amount)
-        external
-        onlyKeycoin
-        checkSupplyGroup(_sGroup)
-        returns (bool _received)
-    {
-        supplyGroupVesting[_sGroup].unvested += _amount;
-        _received = true;
+    function _setSupplyGroup(bytes32 _sGroup, uint64 _cliff, uint64 _duration) internal {
+        require(!supplyGroups[_sGroup].exists, "EXISTING GROUP");
+        require(_duration > 0, "ZERO DURATION");
+        supplyGroups[_sGroup] = SupplyGroup({cliff: _cliff, duration: _duration, exists: true});
+        emit SupplyGroupSet(_sGroup, _cliff, _duration);
+    }
+
+    function setSupplyGroup(bytes32 _sGroup, uint64 _cliff, uint64 _duration) external onlyOwner {
+        _setSupplyGroup(_sGroup, _cliff, _duration);
     }
 
     /**
-     * @dev Computes the releasable (vested but unreleased) amount of tokens for a given supply group.
-     * Implements a linear vesting curve after the cliff period.
-     * @param supplyGroup The bytes32 identifier of the supply group.
-     * @param _timestamp The timestamp for which to calculate releasable amount. If 0, defaults to block.timestamp.
-     * @return rAmount The amount of tokens that are releasable at the given timestamp.
+     * @notice Called by Keycoin token contract to create a vesting schedule for a beneficiary.
+     * @param _sGroup supply group id
+     * @param _beneficiary address receiving the vested tokens
+     * @param _amount amount to vest
      */
-    function _releasable(bytes32 supplyGroup, uint _timestamp) 
-        internal 
-        view 
-        checkSupplyGroup(supplyGroup) 
-        returns (uint rAmount) 
+    function receiveVesting(bytes32 _sGroup, address _beneficiary, uint256 _amount)
+        external
+        onlyKeycoin
+        checkSupplyGroup(_sGroup)
+        returns (bool)
     {
-        uint timestamp = _timestamp == 0 ? block.timestamp : _timestamp;
-        SupplyGroupVesting memory vesting = supplyGroupVesting[supplyGroup];
+        require(_beneficiary != address(0), "ZERO BENEFICIARY");
+        require(_amount > 0, "ZERO AMOUNT");
 
-        uint totalAllocation = vesting.unvested + vesting.released;
+        SupplyGroup memory g = supplyGroups[_sGroup];
+        uint256 oneMonth = (365 days) / 12;
+        uint64 start = uint64(block.timestamp);
+        uint64 end = uint64(uint256(start) + (uint256(g.cliff + g.duration) * oneMonth));
+
+        VestingSchedule memory s = VestingSchedule({amount: _amount, released: 0, start: start, end: end});
+        schedules[_sGroup][_beneficiary].push(s);
+        totalUnvested[_sGroup] += _amount;
+
+        uint256 idx = schedules[_sGroup][_beneficiary].length - 1;
+        emit VestingReceived(_sGroup, _beneficiary, _amount, start, end, idx);
+        return true;
+    }
+
+    // Returns number of schedules for beneficiary in a supply group
+    function getScheduleCount(bytes32 _sGroup, address _beneficiary) external view returns (uint256) {
+        return schedules[_sGroup][_beneficiary].length;
+    }
+
+    // Returns a single schedule (useful for UI). Beware of gas if many schedules.
+    function getSchedule(bytes32 _sGroup, address _beneficiary, uint256 _index)
+        external
+        view
+        returns (uint256 amount, uint256 released, uint64 start, uint64 end)
+    {
+        VestingSchedule storage s = schedules[_sGroup][_beneficiary][_index];
+        return (s.amount, s.released, s.start, s.end);
+    }
+
+    // compute releasable for a single schedule
+    function _releasableSchedule(VestingSchedule memory s, uint cliff, uint _timestamp) internal view returns (uint256) {
+        
+        uint timestamp = _timestamp == 0 ? block.timestamp : _timestamp;
         uint oneMonth = 365 days / 12;
 
         // Calculate cliff time
-        uint cliffTime = vesting.start + (vesting.cliff * oneMonth);
+        uint cliffTime = s.start + (cliff * oneMonth);
 
         // Before cliff: nothing vested
         if (timestamp < cliffTime) {
             return 0;
         }
         // After end: all vested
-        else if (timestamp >= vesting.end) {
-            return vesting.unvested;
+        else if (timestamp >= s.end) {
+            return s.amount - s.released;
         }
         else {
             // Linear vesting calculation
-            uint totalDuration = vesting.end - cliffTime;
+            uint totalDuration = s.end - cliffTime;
             uint elapsed = timestamp - cliffTime;
-            uint vestedSoFar = (totalAllocation * elapsed) / totalDuration;
+            uint vestedSoFar = (s.amount * elapsed) / totalDuration;
         
-            if (vestedSoFar <= vesting.released) {
+            if (vestedSoFar <= s.released) {
                 return 0;
             }
 
-            return vestedSoFar - vesting.released;
+            return vestedSoFar - s.released;
         }
     }
 
-    /**
-     * @dev Public view wrapper for `_releasable`.
-     * @param supplyGroup The bytes32 identifier of the supply group.
-     * @param _timestamp Optional timestamp for calculation. If 0, uses current block time.
-     * @return rAmount The releasable amount for the supply group.
-     */
-    function releasable(bytes32 supplyGroup, uint _timestamp) public view returns (uint rAmount) {
-        rAmount = _releasable(supplyGroup, _timestamp);
+    // Public view: total releasable for beneficiary in a supplyGroup
+    function releasable(bytes32 _sGroup, address _beneficiary, uint _timestamp) public view checkSupplyGroup(_sGroup) returns (uint256) {
+        VestingSchedule[] storage arr = schedules[_sGroup][_beneficiary];
+        uint256 sum = 0;
+        for (uint256 i = 0; i < arr.length; i++) {
+            sum += _releasableSchedule(arr[i], supplyGroups[_sGroup].cliff, _timestamp);
+        }
+        return sum;
     }
 
     /**
-     * @dev Releases vested tokens for a specific supply group to a recipient address.
-     * @param supplyGroup The bytes32 identifier of the supply group to release from.
-     * @param amount The amount to be released to the recipient `to`
-     * @param to The address to receive the vested tokens.
-     *
-     * Requirements:
-     * - Caller must be the contract owner.
-     * - There must be tokens available to release.
+     * @notice Release up to `amount` tokens for beneficiary from supplyGroup.
+     * Releases are pulled from schedules in FIFO order (oldest first) and only from vested parts.
      */
-    function release(bytes32 supplyGroup, uint amount, address to) public onlyOwner {
-        uint rAmount = _releasable(supplyGroup, 0);
-        require(rAmount > 0, "UNRELEASABLE YET");
-        require(amount <= rAmount, "REQUESTED AMOUNT OVERFLOW");
+    function release(bytes32 _sGroup, uint256 _amount) public checkSupplyGroup(_sGroup) {
+        require(_amount > 0, "ZERO AMOUNT");
+        address _beneficiary = _msgSender();
+        uint256 remaining = _amount;
+        VestingSchedule[] storage arr = schedules[_sGroup][_beneficiary];
+        uint256 len = arr.length;
+        require(len > 0, "NO SCHEDULES");
 
-        SupplyGroupVesting storage vesting = supplyGroupVesting[supplyGroup];
+        uint256 totalReleasedNow = 0;
 
-        vesting.released += amount;
-        vesting.unvested -= amount;
-        releasedOf[to] += amount;
+        for (uint256 i = 0; i < len && remaining > 0; i++) {
+            uint256 r = _releasableSchedule(arr[i], supplyGroups[_sGroup].cliff, 0);
+            if (r == 0) continue;
 
-        SafeERC20.safeTransfer(IERC20(keycoinERC20), to, amount);
+            uint256 take = r <= remaining ? r : remaining;
+            arr[i].released += take;
+            totalUnvested[_sGroup] -= take;
+            remaining -= take;
+            totalReleasedNow += take;
+        }
+
+        require(totalReleasedNow > 0, "UNRELEASABLE YET");
+        require(totalReleasedNow <= _amount, "OVER-RELEASED");
+
+        releasedOf[_beneficiary] += totalReleasedNow;
+        IERC20(keycoinERC20).safeTransfer(_beneficiary, totalReleasedNow);
+
+        emit Released(_sGroup, _beneficiary, totalReleasedNow);
+    }
+
+    // convenience: release all available for beneficiary in a supplyGroup
+    function releaseAll(bytes32 _sGroup) external checkSupplyGroup(_sGroup) {
+        uint256 r = releasable(_sGroup, _msgSender(), 0);
+        require(r > 0, "NO RELEASABLE");
+        release(_sGroup, r);
     }
 }

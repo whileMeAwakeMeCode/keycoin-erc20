@@ -68,7 +68,10 @@ contract Keycoin is
       address from,
       address to,
       uint256 value
-  ) internal override(ERC20Upgradeable, ERC20PausableUpgradeable) {
+  ) 
+  internal override(ERC20Upgradeable, ERC20PausableUpgradeable)
+  whenNotPaused 
+  {
       super._update(from, to, value);
   }
 
@@ -84,9 +87,9 @@ contract Keycoin is
     _unpause();
   }
 
-  function _mintToVestingWallet(bytes32 _sGroup, uint256 _amount) internal {
+  function _mintToVestingWallet(bytes32 _sGroup, address to, uint256 _amount) internal {
     require(vestingWallet != address(0), "VESTING WALLET UNSET");
-    bool sent = IKeycoinVesting(vestingWallet).receiveVesting(_sGroup, _amount);
+    bool sent = IKeycoinVesting(vestingWallet).receiveVesting(_sGroup, to, _amount);
     require(sent, "VESTING NOT SENT");
     _mint(vestingWallet, _amount);
   }
@@ -112,7 +115,8 @@ contract Keycoin is
     currentSupply[supplyGroup] += amount;
 
     if (supplyGroup < 3) {  // team or cashflow : vesting wallet    // TODO: VestingWallet pour crowdsale supply aussi !
-      _mintToVestingWallet(supplyGroups[supplyGroup], amount);
+      //_mintToVestingWallet(supplyGroups[supplyGroup], amount);
+      _mintToVestingWallet(supplyGroups[supplyGroup], to, amount);
     }
     else _mint(to, amount);
   }
