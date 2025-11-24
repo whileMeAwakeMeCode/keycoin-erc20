@@ -16,5 +16,6 @@ contract Storage {
     mapping(uint => bytes32) internal supplyGroups;
 
     address public vestingWallet;
+    address public keycoinCrowdsale;
     
 }

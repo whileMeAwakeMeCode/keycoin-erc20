@@ -5,6 +5,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./KycVerifier.sol";
+import "./IKeycoinVesting.sol";
+
 
 // import "hardhat/console.sol";
 
@@ -14,6 +16,10 @@ interface IERC20Decimals is IERC20 {
 
 interface IERC20Burn is IERC20 {
     function burn(uint amount) external;
+}
+
+interface IKeycoin {
+    function vestingWallet() external view returns(address);
 }
 
 
@@ -262,6 +268,15 @@ contract KeycoinCrowdsale is KycVerifier, ReentrancyGuard {
         _purchaseFromUsd(approvedUsdAmount);
     }
 
+    /* TODO ! */
+    function _transferToVestingWallet(uint vAmount, address beneficiary) internal {
+        address vestingWallet = IKeycoin(keycoinToken).vestingWallet();
+        require(vestingWallet != address(0), "VESTING WALLET UNSET");
+        bool sent = IKeycoinVesting(vestingWallet).receiveVesting(keccak256('CROWDSALE'), beneficiary, vAmount);
+        require(sent, "VESTING NOT SENT");
+        SafeERC20.safeTransfer(IERC20(keycoinToken), vestingWallet, vAmount);
+    }
+
     
     function _purchaseFromUsd(uint approvedUsdAmount) internal crowdsaleOpened nonReentrant {
         require(approvedUsdAmount > 0, "MIN-USDC-AMOUNT");
@@ -293,9 +308,13 @@ contract KeycoinCrowdsale is KycVerifier, ReentrancyGuard {
             }
         }
 
-        // TODO: Mint ONLY 20% of `tAmountOut`
-        SafeERC20.safeTransfer(IERC20(keycoinToken), sender, tAmountOut);
-        // TODO: Mint 80% of `tAmountOut` to vestingWallet supplyGroup "CROWDSALE"
+        // transfer 20% of `tAmountOut` straight to the beneficiary account
+        uint trfAmount = tAmountOut * 20 / 100; 
+        SafeERC20.safeTransfer(IERC20(keycoinToken), sender, trfAmount/*tAmountOut*/);
+
+        // transfer 80% of `tAmountOut` to vestingWallet supplyGroup "CROWDSALE"
+        uint vAmount = tAmountOut - trfAmount;
+        _transferToVestingWallet(vAmount, sender);
 
         // ✅ quoteRest is in USDC (6 decimals), safe to refund
         if (quoteRest > 0 && quoteRest <= approvedUsdAmount) {

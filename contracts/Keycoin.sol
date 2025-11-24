@@ -54,6 +54,7 @@ contract Keycoin is
     _supplySafeMint(crowdsaleContract, 36000000*10**18, 3);
     bool opened = IKeycoinCrowdsale(crowdsaleContract).openCrowdsale();
     require(opened, "CROWDSALE OPENING FAILED");
+    keycoinCrowdsale = crowdsaleContract;
   }
 
   function burn(uint amount) external {
@@ -114,8 +115,7 @@ contract Keycoin is
 
     currentSupply[supplyGroup] += amount;
 
-    if (supplyGroup < 3) {  // team or cashflow : vesting wallet    // TODO: VestingWallet pour crowdsale supply aussi !
-      //_mintToVestingWallet(supplyGroups[supplyGroup], amount);
+    if (supplyGroup < 3) {  // team or cashflow : vesting wallet    
       _mintToVestingWallet(supplyGroups[supplyGroup], to, amount);
     }
     else _mint(to, amount);

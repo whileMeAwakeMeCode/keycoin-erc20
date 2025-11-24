@@ -71,8 +71,8 @@ describe('Keycoin', function () {
         // reproduce abi.encode(user, deadline)
         const abiCoder = ethers.AbiCoder.defaultAbiCoder();
         const encoded = abiCoder.encode(
-        ["address", "uint256"],
-        [userAddress, deadline]
+            ["address", "uint256"],
+            [userAddress, deadline]
         );
         const structHash = ethers.keccak256(encoded);
 
@@ -91,6 +91,15 @@ describe('Keycoin', function () {
         await from(cli, usdc).approve(crowdsale.target, value);
         const { deadline, signature } = await getKycSignature(cli.address);
         await from(cli, crowdsale).purchaseFromUsd(value, deadline, signature);  
+    }
+
+    /**
+     * @return the full balance of an account (detained KEYCOINS + Unreleased Vesting)
+     */
+    async function fullBalanceOf(address) {
+        const rBalance = await keycoin.balanceOf(address);  
+        const vBalance = await vestingWallet.totalLockedOf(address);
+        return rBalance + vBalance;
     }
 
     /**
@@ -212,6 +221,7 @@ describe('Keycoin', function () {
         await expect(
             from(signers.minter).mint(signers.user1.address, mintAmount, supply.public)
         ).not.to.be.reverted;
+        
         expect(await keycoin.balanceOf(signers.user1.address)).to.eq(mintAmount);
         expect(await keycoin.currentSupply(supply.public)).to.eq(mintAmount);
     })
@@ -386,15 +396,14 @@ describe('Keycoin', function () {
         // only minter
         await expect(from(signers.owner).mintCrowdsaleSupplyAndOpen(crowdsale.target)).to.be.revertedWithCustomError(keycoin, 'AccessControlUnauthorizedAccount');
         expect(await crowdsale.crowdsaleIsOpened()).to.be.false;
-
         // ok
         await expect(from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)).not.to.be.rejected;
         expect(await crowdsale.crowdsaleIsOpened()).to.be.true;
-
         // crowdsale already opened
         await expect(from(signers.minter).mintCrowdsaleSupplyAndOpen(crowdsale.target)).to.be.rejectedWith('CROWDSALE ALREADY OPENED');
     
         const bal = (await keycoin.balanceOf(crowdsale.target)).toString();
+        
         await expect(bal).to.eq(await parseEther('36000000').toString());
         // client1 buys KEYCOIN in phase 1
         await expect(await usdc.balanceOf(client1.address)).to.eq(parseUnits('1000', usdDecimals));
@@ -403,8 +412,9 @@ describe('Keycoin', function () {
 
         /// client1 spends 100 usdc for KEYCOIN
         await expect(approveAndPurchase(client1, parseUnits('100', usdDecimals))).not.to.be.rejected;
-
-        expect(await keycoin.balanceOf(client1.address)).to.eq(quote1[0]);
+        
+        //expect(await keycoin.balanceOf(client1.address)).to.eq(quote1[0]);
+        expect(await fullBalanceOf(client1.address)).to.eq(quote1[0]);
         expect((await crowdsale.currentPricePolicy())[1]).to.eq(phaseRate[0]);
         expect((await crowdsale.currentPricePolicy())[2]).to.eq(quote1[0]);
         expect(await crowdsale.totalSold()).to.eq(quote1[0]);
@@ -667,7 +677,7 @@ describe('Keycoin', function () {
 
         await from(signers.user1, vestingWallet).release(teamVesting.code, parseEther("400000"));   
 
-        expect((await vestingWallet.releasedOf(signers.user1.address)).toString()).to.eq('400000000000000000000000')
+        expect((await vestingWallet.releasedOf(signers.user1.address)).toString()).to.eq(parseEther("400000"))
 
         expect(
             (await vestingWallet.totalUnvested(teamVesting.code)).toString()
@@ -687,5 +697,9 @@ describe('Keycoin', function () {
             (await vestingWallet.releasable(teamVesting.code, signers.user1.address, 0)).toString()
         ).to.eq('1400000000000000000000000');
         
+    })
+
+    it('should be able to release crowdsale tokens according to the vesting schedule', async() => {
+
     })
 }) 

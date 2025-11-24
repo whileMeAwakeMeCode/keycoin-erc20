@@ -6,6 +6,10 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 using SafeERC20 for IERC20;
 
+interface IKeycoin {
+    function keycoinCrowdsale() external view returns(address);
+}
+
 /**
  * @title KeycoinVesting v2 (beneficiary actions based)
  * @dev Support multiple vesting receipts per (supplyGroup, beneficiary).
@@ -66,7 +70,13 @@ contract KeycoinVesting is Ownable {
     }
 
     modifier onlyKeycoin() {
-        require(address(_msgSender()) == address(keycoinERC20), "KEYCOIN ONLY");
+        require(
+            (
+                address(_msgSender()) == address(keycoinERC20)
+                || address(_msgSender()) == IKeycoin(keycoinERC20).keycoinCrowdsale()
+            ), 
+            "KEYCOIN ONLY"
+        );
         _;
     }
 
@@ -205,5 +215,24 @@ contract KeycoinVesting is Ownable {
         uint256 r = releasable(_sGroup, _msgSender(), 0);
         require(r > 0, "NO RELEASABLE");
         release(_sGroup, r);
+    }
+
+    function totalLockedOf(address account) public view returns(uint lAmount) {
+        bytes32[3] memory groups = [
+            keccak256("TEAM"),
+            keccak256("CASHFLOW"),
+            keccak256("CROWDSALE")
+        ];
+
+        for (uint256 g = 0; g < groups.length; g++) {
+            bytes32 sg = groups[g];
+            if (!supplyGroups[sg].exists) continue;
+
+
+            for (uint256 i = 0; i < schedules[sg][account].length; i++) {
+                VestingSchedule memory s = schedules[sg][account][i];
+                lAmount += (s.amount - s.released);
+            }
+        }
     }
 }
